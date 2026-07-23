@@ -6,6 +6,8 @@
   "description": "GrãoCerto — ferramenta de decisão \"Armazenar ou Vender\" para o médio produtor rural brasileiro",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node server/cotacoes-proxy.mjs",
+    "dev:all": "concurrently -n web,api -c green,cyan \"vite\" \"node server/cotacoes-proxy.mjs\"",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -15,6 +17,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^10.0.3",
     "vite": "^5.4.11"
   },
   "allowScripts": {

@@ -18,19 +18,27 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     `src/decisao-armazenar-vender.jsx` (mantido single-file, estilos inline, visual e
     modelo de cálculo intactos). Culturas: soja, milho, trigo.
 - **Serviço de cotações** (`src/services/cotacoes.js`): preenche o "preço hoje"
-  automaticamente para soja e milho, com fallback manual. Arquitetura em camadas
-  (providers), da mais "ao vivo" para a mais estática:
-  1. `VITE_COTACOES_ENDPOINT` → backend próprio (fase futura), sem CORS em dev via
-     proxy comentado no `vite.config.js`. Desligado por padrão (ver `.env.example`).
-  2. `public/cotacoes.json` → snapshot de referência versionado (mesma origem, funciona
-     hoje). **Atualizar com a cotação do dia** até o backend existir. Trigo fica manual.
+  automaticamente para soja e milho **ao vivo** (CEPEA/ESALQ), com fallback manual.
+  Arquitetura em camadas (providers), da mais "ao vivo" para a mais estática:
+  1. `VITE_COTACOES_ENDPOINT` → **backend leve** `server/cotacoes-proxy.mjs` (ver abaixo).
+     Em dev, `.env.development` já aponta para `/api/cotacoes`, encaminhado pelo proxy do
+     Vite (`/api` → porta 8787). Suba tudo junto com `npm run dev:all`.
+  2. `public/cotacoes.json` → snapshot de referência versionado (mesma origem). Fallback
+     quando o backend está fora. **Manter atualizado.** Trigo fica sempre manual.
   3. Edição manual do produtor (o campo continua editável; badge mostra fonte/data e
      avisa quando o valor é "referência" ou "ajustado por você").
-  - **Limitação real da fonte (jul/2026):** o CEPEA/ESALQ não tem API pública gratuita
-    (a oficial custa ~R$ 10,5 mil) e o site fica atrás de Cloudflare (bloqueia fetch
-    direto do navegador por CORS + desafio de bot). Puxar o indicador ao vivo exige um
-    backend leve (proxy) ou a API paga. Dados CEPEA/ESALQ são CC BY-NC 4.0 (atribuição
-    obrigatória, uso não-comercial) — a atribuição está visível na interface.
+- **Backend de cotações** (`server/cotacoes-proxy.mjs`): servidor Node zero-dependência
+  (porta 8787). Busca os indicadores no **endpoint do widget de embed do CEPEA**
+  (`widgetproduto.js.php?id_indicador[]=92&id_indicador[]=77`; 92=Soja Paranaguá,
+  77=Milho), faz o parse da tabela HTML e devolve JSON normalizado em `/api/cotacoes`,
+  com cache de 30 min e fallback para o último sucesso.
+  - **Truque que viabiliza o "ao vivo":** as páginas de indicador do CEPEA ficam atrás de
+    Cloudflare (403 + desafio de bot para fetch server-side), mas o endpoint do *widget*
+    é liberado para requisições com **cabeçalhos de navegador** (User-Agent + Referer) —
+    inclusive do Node. O proxy só funciona se mandar esses headers. A API oficial do CEPEA
+    é paga (~R$ 10,5 mil); esta rota do widget é gratuita.
+  - Dados CEPEA/ESALQ: **CC BY-NC 4.0** (atribuição obrigatória, uso não-comercial) — a
+    atribuição está no campo `fonte` e visível na interface.
 - Sem persistência ainda. Este projeto nasceu de um protótipo em artifact do Claude.ai.
 
 ## Modelo de cálculo (núcleo do produto — não alterar sem discutir)
@@ -44,12 +52,14 @@ Visão de longo prazo (não implementar ainda, só para contexto):
 
 ## Próximos passos técnicos (nesta ordem)
 1. ~~Estruturar como projeto Vite + React, componente integrado, rodando com `npm run dev`.~~ ✅ Feito.
-2. Serviço de cotações: indicadores diários CEPEA/Esalq (soja Paranaguá, milho ESALQ/BM&F)
-   para substituir o preço manual. Manter fallback manual quando a fonte falhar.
-   - ✅ Feito: abstração de providers + fallback manual + snapshot `public/cotacoes.json`.
-   - ⏳ Falta o dado **ao vivo**: subir um backend leve (proxy) que consome o CEPEA (contorna
-     Cloudflare/CORS) ou assinar a API oficial, e ligar `VITE_COTACOES_ENDPOINT`. Enquanto
-     isso, manter o snapshot atualizado manualmente.
+2. ~~Serviço de cotações: indicadores diários CEPEA/Esalq (soja Paranaguá, milho ESALQ/BM&F)
+   para substituir o preço manual, com fallback manual.~~ ✅ Feito — inclui o backend leve
+   `server/cotacoes-proxy.mjs` puxando o dado **ao vivo** do CEPEA. Pendências menores:
+   - Ao **deploy** (passo 5), o proxy precisa virar função serverless (ex.: `/api` na Vercel)
+     e apontar `VITE_COTACOES_ENDPOINT` para ela em produção; hoje o dado ao vivo só roda
+     em dev (`dev:all`). Sem isso, produção usa o snapshot.
+   - Considerar respeitar mais o CEPEA: cache compartilhado/mais longo, e um cron diário que
+     também atualiza `public/cotacoes.json` (mantém o fallback fresco).
 3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
 4. Persistência simples das simulações do produtor (começar com backend leve ou local).
 5. Preparar deploy (Vercel) para enviar link nas entrevistas de validação com produtores.
