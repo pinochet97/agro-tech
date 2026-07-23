@@ -14,11 +14,36 @@
 // Dados CEPEA/ESALQ: CC BY-NC 4.0 (atribuição obrigatória, uso não
 // comercial). A atribuição é repassada no campo "fonte" e exibida na UI.
 //
-// Zero dependências: usa só o http e o fetch nativos do Node (18+).
+// Além do proxy de cotações, expõe a ENTRADA CONVERSACIONAL:
+//   POST /api/interpretar        {texto}              → parâmetros extraídos
+//   POST /api/interpretar-imagem {imagem, mediaType}  → romaneio/NF por foto
+// A extração usa a API do Claude (SDK oficial) quando ANTHROPIC_API_KEY
+// está no ambiente/.env; sem chave, o texto cai no extrator local de
+// regras (src/services/extrator.js) e a foto devolve erro claro.
+// A IA só EXTRAI parâmetros — o cálculo é sempre do app, nunca do modelo.
+//
 // Rodar:  node server/cotacoes-proxy.mjs   (porta 8787 por padrão)
 // ─────────────────────────────────────────────────────────────
 
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import Anthropic from "@anthropic-ai/sdk";
+import { extrairParametros, SCHEMA_PARAMETROS } from "../src/services/extrator.js";
+
+// Carrega .env da raiz do projeto (sem dependência de dotenv).
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
+try {
+  for (const linha of readFileSync(join(RAIZ, ".env"), "utf8").split(/\r?\n/)) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(linha);
+    if (m && process.env[m[1]] == null) {
+      process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  }
+} catch {
+  // sem .env — segue só com o ambiente
+}
 
 const PORT = Number(process.env.PORT) || 8787;
 const CACHE_MS = 30 * 60 * 1000; // indicadores saem ~1x/dia; 30 min é folgado
@@ -140,15 +165,128 @@ async function obterCotacoes() {
   }
 }
 
+// ── Entrada conversacional (IA + fallback de regras) ─────────────
+
+const MODELO_IA = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+
+// Cliente só quando há credencial — sem ela o texto usa o extrator local.
+const ia =
+  process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN
+    ? new Anthropic()
+    : null;
+
+const SISTEMA_EXTRACAO = `Você extrai parâmetros de simulação de comercialização de grãos a partir de mensagens de produtores rurais brasileiros (fala coloquial) ou de fotos de documentos (romaneio de balança, nota fiscal).
+
+Regras:
+- Extraia SOMENTE o que estiver explícito; use null para o que não foi mencionado. Nunca invente valores.
+- Converta unidades: "12 mil sacas" = 12000; toneladas ou kg → sacas de 60 kg.
+- Percentual "ao mês" de dívida/banco/juros → jurosMes; de perda/quebra → perdaMes; tarifa R$/saca/mês de armazém/silo → custoArmz.
+- Preço atual → precoHoje; preço esperado/futuro ("vai a", "na entressafra") → precoEsperado. Ambos em R$/saca.
+- Você NÃO faz a simulação, NÃO calcula resultado e NÃO recomenda nada — só extrai. Todo cálculo é do aplicativo.
+- "resumo": uma frase curta em pt-BR, linguagem simples de produtor, dizendo o que você entendeu (para o produtor confirmar antes de simular).`;
+
+// Remove nulls e separa o resumo — devolve só os campos preenchidos.
+function limparSaidaIA(saida) {
+  const { resumo, ...resto } = saida || {};
+  const campos = Object.fromEntries(
+    Object.entries(resto).filter(([, v]) => v !== null && v !== undefined),
+  );
+  return { campos, resumo: resumo || null };
+}
+
+async function interpretarTextoIA(texto) {
+  const resp = await ia.messages.create(
+    {
+      model: MODELO_IA,
+      max_tokens: 2048,
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: "low",
+        format: { type: "json_schema", schema: SCHEMA_PARAMETROS },
+      },
+      system: SISTEMA_EXTRACAO,
+      messages: [{ role: "user", content: texto }],
+    },
+    { timeout: 60_000 },
+  );
+  if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
+  const bloco = resp.content.find((b) => b.type === "text");
+  return limparSaidaIA(JSON.parse(bloco.text));
+}
+
+async function interpretarImagemIA(imagemB64, mediaType) {
+  const resp = await ia.messages.create(
+    {
+      model: MODELO_IA,
+      max_tokens: 3072,
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: "medium",
+        format: { type: "json_schema", schema: SCHEMA_PARAMETROS },
+      },
+      system: SISTEMA_EXTRACAO,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: imagemB64 },
+            },
+            {
+              type: "text",
+              text: "Extraia os dados deste documento de grãos (romaneio de balança ou nota fiscal): cultura, quantidade (peso líquido em kg → sacas de 60 kg) e, se houver, valor unitário em R$/saca como precoHoje. No resumo, diga que tipo de documento é e o que foi lido.",
+            },
+          ],
+        },
+      ],
+    },
+    { timeout: 90_000 },
+  );
+  if (resp.stop_reason === "refusal") throw new Error("leitura recusada");
+  const bloco = resp.content.find((b) => b.type === "text");
+  return limparSaidaIA(JSON.parse(bloco.text));
+}
+
+// Lê e parseia o corpo JSON de um POST (limite p/ fotos em base64).
+function lerCorpo(req, limite = 12 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let tam = 0;
+    const partes = [];
+    req.on("data", (c) => {
+      tam += c.length;
+      if (tam > limite) {
+        reject(new Error("payload muito grande"));
+        req.destroy();
+      } else {
+        partes.push(c);
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(partes).toString("utf8") || "{}"));
+      } catch {
+        reject(new Error("JSON inválido"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
 const server = createServer(async (req, res) => {
   const cors = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
   };
   if (req.method === "OPTIONS") {
     res.writeHead(204, cors);
     return res.end();
   }
+  const json = (status, corpo) => {
+    res.writeHead(status, { ...cors, "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(corpo));
+  };
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -172,8 +310,56 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  res.writeHead(404, { ...cors, "Content-Type": "application/json" });
-  res.end(JSON.stringify({ erro: "rota não encontrada" }));
+  // ── Entrada conversacional ──
+  if (req.method === "POST" && url.pathname === "/api/interpretar") {
+    try {
+      const { texto } = await lerCorpo(req);
+      if (!texto || typeof texto !== "string" || !texto.trim()) {
+        return json(400, { erro: "envie { texto } com a frase do produtor" });
+      }
+      if (ia) {
+        try {
+          const { campos, resumo } = await interpretarTextoIA(texto.trim());
+          return json(200, { campos, resumo, fonte: "ia" });
+        } catch (e) {
+          // IA falhou (rede, limite, recusa) → cai nas regras locais
+          console.warn("[interpretar] IA falhou, usando regras:", e.message || e);
+        }
+      }
+      const campos = extrairParametros(texto);
+      return json(200, {
+        campos,
+        resumo: null,
+        fonte: "regras",
+        aviso: ia
+          ? "IA indisponível agora — interpretação por regras locais."
+          : "Sem ANTHROPIC_API_KEY no servidor — interpretação por regras locais.",
+      });
+    } catch (e) {
+      return json(400, { erro: String(e.message || e) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/interpretar-imagem") {
+    if (!ia) {
+      return json(503, {
+        erro:
+          "Leitura de foto exige IA no servidor: defina ANTHROPIC_API_KEY no .env e reinicie o backend.",
+      });
+    }
+    try {
+      const { imagem, mediaType } = await lerCorpo(req);
+      if (!imagem || !/^image\/(jpeg|png|webp|gif)$/.test(mediaType || "")) {
+        return json(400, { erro: "envie { imagem: base64, mediaType: image/jpeg|png|webp }" });
+      }
+      const { campos, resumo } = await interpretarImagemIA(imagem, mediaType);
+      return json(200, { campos, resumo, fonte: "documento" });
+    } catch (e) {
+      return json(502, { erro: `não consegui ler o documento: ${String(e.message || e)}` });
+    }
+  }
+
+  json(404, { erro: "rota não encontrada" });
 });
 
 server.listen(PORT, () => {

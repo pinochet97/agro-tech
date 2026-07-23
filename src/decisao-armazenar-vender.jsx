@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
 import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
+import { interpretarTexto, interpretarImagem, vozSuportada, criarReconhecimentoVoz } from "./services/conversa";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
@@ -23,6 +24,18 @@ const fmtData = (iso) => {
   if (!iso) return "";
   const [a, m, d] = String(iso).split("-");
   return d && m && a ? `${d}/${m}/${a}` : String(iso);
+};
+
+// Como exibir cada parâmetro extraído no card "foi isso que entendi".
+const ROTULOS_CAMPOS = {
+  cultura: ["Cultura", (v) => CULTURAS[v]?.nome || v],
+  sacas: ["Quantidade", (v) => `${fmtBRL(v)} sacas`],
+  precoHoje: ["Preço hoje", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
+  precoEsperado: ["Preço esperado", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
+  meses: ["Horizonte", (v) => `${v} ${v === 1 ? "mês" : "meses"}`],
+  jurosMes: ["Custo do dinheiro", (v) => `${fmtBRL(v, 2)}% a.m.`],
+  custoArmz: ["Armazenagem", (v) => `R$ ${fmtBRL(v, 2)}/saca/mês`],
+  perdaMes: ["Perda técnica", (v) => `${fmtBRL(v, 2)}% ao mês`],
 };
 
 function Campo({ rotulo, sufixo, valor, onChange, passo = 1, min = 0, ajuda }) {
@@ -198,12 +211,108 @@ export default function App() {
     setTimeout(() => setSimSalva(false), 2500);
   };
 
+  // ── Entrada conversacional (texto, voz, foto) ─────────────────
+  // A frase/foto vira parâmetros extraídos; o produtor CONFIRMA o que
+  // foi entendido antes de qualquer coisa mudar na simulação.
+  const [fraseConversa, setFraseConversa] = useState("");
+  const [interpretando, setInterpretando] = useState(false);
+  const [entendimento, setEntendimento] = useState(null); // {campos, resumo, fonte, aviso}
+  const [erroConversa, setErroConversa] = useState(null);
+  const [gravando, setGravando] = useState(false);
+  const [vozOk] = useState(() => vozSuportada());
+  const reconhecimentoRef = useRef(null);
+  const fotoInputRef = useRef(null);
+
+  const enviarFrase = async () => {
+    const texto = fraseConversa.trim();
+    if (!texto) return;
+    setErroConversa(null);
+    setEntendimento(null);
+    setInterpretando(true);
+    try {
+      const r = await interpretarTexto(texto);
+      if (!Object.keys(r.campos).length) {
+        setErroConversa(
+          'Não achei números nem cultura nessa frase — tente algo como "colhi 12 mil sacas de soja, devendo 1,2 ao mês no banco".',
+        );
+      } else {
+        setEntendimento(r);
+      }
+    } finally {
+      setInterpretando(false);
+    }
+  };
+
+  const enviarFoto = async (e) => {
+    const arquivo = e.target.files?.[0];
+    e.target.value = ""; // permite escolher o mesmo arquivo de novo
+    if (!arquivo) return;
+    setErroConversa(null);
+    setEntendimento(null);
+    setInterpretando(true);
+    try {
+      const r = await interpretarImagem(arquivo);
+      if (!Object.keys(r.campos).length) {
+        setErroConversa("Não consegui ler dados úteis nesse documento — tente uma foto mais nítida.");
+      } else {
+        setEntendimento(r);
+      }
+    } catch (err) {
+      setErroConversa(String(err.message || err));
+    } finally {
+      setInterpretando(false);
+    }
+  };
+
+  const alternarVoz = () => {
+    if (gravando) {
+      reconhecimentoRef.current?.stop();
+      return;
+    }
+    const rec = criarReconhecimentoVoz(setFraseConversa, () => setGravando(false));
+    if (!rec) return;
+    reconhecimentoRef.current = rec;
+    setGravando(true);
+    rec.start();
+  };
+
+  // Aplica os parâmetros confirmados; só então o veredito muda.
+  const aplicarEntendimento = () => {
+    const c = entendimento.campos;
+    const trocouCultura = c.cultura && CULTURAS[c.cultura] && c.cultura !== cultura;
+    if (trocouCultura) {
+      setCultura(c.cultura);
+      setPrecoEsperado(c.precoEsperado ?? CULTURAS[c.cultura].precoEsperado);
+      if (c.precoHoje != null) {
+        setPrecoHoje(c.precoHoje);
+        setPrecoEditado(true); // preço veio do produtor, não sobrescrever com cotação
+      } else {
+        const cot = cotacoes?.[c.cultura];
+        setPrecoHoje(cot?.preco ?? CULTURAS[c.cultura].precoHoje);
+        setPrecoEditado(false);
+      }
+    } else {
+      if (c.precoHoje != null) {
+        setPrecoHoje(c.precoHoje);
+        setPrecoEditado(true);
+      }
+      if (c.precoEsperado != null) setPrecoEsperado(c.precoEsperado);
+    }
+    if (c.sacas != null) setSacas(c.sacas);
+    if (c.meses != null) setMeses(c.meses);
+    if (c.jurosMes != null) setJurosMes(c.jurosMes);
+    if (c.custoArmz != null) setCustoArmz(c.custoArmz);
+    if (c.perdaMes != null) setPerdaMes(c.perdaMes);
+    setEntendimento(null);
+    setFraseConversa("");
+  };
+
   return (
     <div style={st.pagina}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;600&display=swap');
         * { box-sizing: border-box; }
-        input:focus, button:focus-visible, select:focus { outline: 2px solid #C99B2F; outline-offset: 2px; }
+        input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #C99B2F; outline-offset: 2px; }
         input[type=range] { accent-color: #C99B2F; }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
@@ -239,6 +348,101 @@ export default function App() {
           />
         </main>
       ) : (
+      <>
+      <section style={st.conversaPainel}>
+        <h2 style={st.tituloSecao}>Fale com o GrãoCerto</h2>
+        <p style={st.formIntro}>
+          Conte como está sua safra — por texto, voz ou foto de romaneio de balança / nota
+          fiscal — que eu preencho a simulação. Ex.: “colhi 12 mil sacas de soja, tô devendo
+          no banco a 1,2 ao mês”.
+        </p>
+        <textarea
+          value={fraseConversa}
+          onChange={(e) => setFraseConversa(e.target.value)}
+          rows={2}
+          style={st.conversaInput}
+          placeholder={gravando ? "Ouvindo… pode falar" : "Escreva aqui ou use o microfone…"}
+          disabled={interpretando}
+        />
+        <div style={st.conversaAcoes}>
+          <button
+            type="button"
+            style={st.btnPrimario}
+            onClick={enviarFrase}
+            disabled={interpretando || !fraseConversa.trim()}
+          >
+            {interpretando ? "Interpretando…" : "Interpretar"}
+          </button>
+          {vozOk && (
+            <button
+              type="button"
+              style={{ ...st.btnSecundario, ...(gravando ? st.btnGravando : {}) }}
+              onClick={alternarVoz}
+              disabled={interpretando}
+            >
+              {gravando ? "■ Parar" : "🎤 Falar"}
+            </button>
+          )}
+          <button
+            type="button"
+            style={st.btnSecundario}
+            onClick={() => fotoInputRef.current?.click()}
+            disabled={interpretando}
+          >
+            📷 Foto de romaneio/NF
+          </button>
+          <input
+            ref={fotoInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: "none" }}
+            onChange={enviarFoto}
+          />
+        </div>
+
+        {erroConversa && <div style={st.conversaErro}>{erroConversa}</div>}
+
+        {entendimento && (
+          <div style={st.entendimento}>
+            <div style={st.entendimentoTitulo}>
+              Foi isso que eu entendi
+              {entendimento.fonte === "documento"
+                ? " do documento"
+                : entendimento.fonte === "regras"
+                  ? " (por regras, sem IA)"
+                  : ""}
+              :
+            </div>
+            {entendimento.resumo && (
+              <p style={st.entendimentoResumo}>“{entendimento.resumo}”</p>
+            )}
+            <ul style={st.entendimentoLista}>
+              {Object.entries(entendimento.campos).map(([k, v]) =>
+                ROTULOS_CAMPOS[k] ? (
+                  <li key={k} style={st.entendimentoItem}>
+                    <span>{ROTULOS_CAMPOS[k][0]}</span>
+                    <strong style={st.entendimentoValor}>{ROTULOS_CAMPOS[k][1](v)}</strong>
+                  </li>
+                ) : null,
+              )}
+            </ul>
+            <p style={st.entendimentoNota}>
+              O que não foi dito continua como está na simulação. Confira antes de confirmar.
+            </p>
+            {entendimento.aviso && <p style={st.entendimentoAviso}>{entendimento.aviso}</p>}
+            <div style={st.formAcoes}>
+              <button type="button" style={st.btnPrimario} onClick={aplicarEntendimento}>
+                Confirmar e simular
+              </button>
+              <button type="button" style={st.btnSecundario} onClick={() => setEntendimento(null)}>
+                Descartar
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       <main style={st.grade}>
         {/* Coluna de entrada */}
         <section style={st.painel}>
@@ -441,6 +645,7 @@ export default function App() {
           </p>
         </section>
       </main>
+      </>
       )}
     </div>
   );
@@ -713,6 +918,83 @@ const st = {
     whiteSpace: "nowrap",
   },
   gradeUnica: { maxWidth: 980, margin: "24px auto 0" },
+  conversaPainel: {
+    maxWidth: 980,
+    margin: "20px auto 0",
+    background: "#FFFFFF",
+    border: "1px solid #D8DED2",
+    borderRadius: 10,
+    padding: "20px 20px 16px",
+  },
+  conversaInput: {
+    width: "100%",
+    padding: "10px 12px",
+    fontSize: 16,
+    fontFamily: "'Archivo', sans-serif",
+    border: "1px solid #C6CFBF",
+    borderRadius: 8,
+    background: "#FDFDFB",
+    color: "#1E2A22",
+    resize: "vertical",
+    boxSizing: "border-box",
+  },
+  conversaAcoes: {
+    display: "flex",
+    gap: 10,
+    marginTop: 10,
+    flexWrap: "wrap",
+  },
+  btnGravando: {
+    background: "#A4432E",
+    color: "#FFFFFF",
+    border: "1px solid #A4432E",
+  },
+  conversaErro: {
+    marginTop: 12,
+    padding: "8px 12px",
+    background: "#FBF3DC",
+    border: "1px solid #E4D296",
+    borderRadius: 8,
+    fontSize: 13,
+    color: "#6E5A17",
+  },
+  entendimento: {
+    marginTop: 14,
+    padding: "12px 14px",
+    background: "#F4F0E3",
+    borderLeft: "4px solid #C99B2F",
+    borderRadius: "0 8px 8px 0",
+  },
+  entendimentoTitulo: {
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: "0.1em",
+    color: "#8A7A45",
+    fontWeight: 700,
+  },
+  entendimentoResumo: {
+    margin: "8px 0 0",
+    fontSize: 14,
+    fontStyle: "italic",
+    color: "#3B473D",
+  },
+  entendimentoLista: {
+    listStyle: "none",
+    margin: "10px 0",
+    padding: 0,
+    maxWidth: 420,
+  },
+  entendimentoItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "5px 0",
+    fontSize: 14,
+    borderBottom: "1px dashed #E4D296",
+  },
+  entendimentoValor: { fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" },
+  entendimentoNota: { margin: "8px 0 0", fontSize: 12, color: "#7A6E45" },
+  entendimentoAviso: { margin: "6px 0 0", fontSize: 12, color: "#A4432E" },
   perfilBar: {
     maxWidth: 980,
     margin: "12px auto 0",

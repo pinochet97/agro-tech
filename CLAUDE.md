@@ -27,8 +27,8 @@ Visão de longo prazo (não implementar ainda, só para contexto):
      quando o backend está fora. **Manter atualizado.** Trigo fica sempre manual.
   3. Edição manual do produtor (o campo continua editável; badge mostra fonte/data e
      avisa quando o valor é "referência" ou "ajustado por você").
-- **Backend de cotações** (`server/cotacoes-proxy.mjs`): servidor Node zero-dependência
-  (porta 8787). Busca os indicadores no **endpoint do widget de embed do CEPEA**
+- **Backend leve** (`server/cotacoes-proxy.mjs`): servidor Node (porta 8787; única
+  dependência: `@anthropic-ai/sdk`). Busca os indicadores no **endpoint do widget de embed do CEPEA**
   (`widgetproduto.js.php?id_indicador[]=92&id_indicador[]=77`; 92=Soja Paranaguá,
   77=Milho), faz o parse da tabela HTML e devolve JSON normalizado em `/api/cotacoes`,
   com cache de 30 min e fallback para o último sucesso.
@@ -39,6 +39,21 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     é paga (~R$ 10,5 mil); esta rota do widget é gratuita.
   - Dados CEPEA/ESALQ: **CC BY-NC 4.0** (atribuição obrigatória, uso não-comercial) — a
     atribuição está no campo `fonte` e visível na interface.
+- **Entrada conversacional** (texto, voz e foto): o produtor conta como está a safra
+  ("colhi 12 mil sacas de soja, tô devendo no banco a 1,2 ao mês") e o app extrai os
+  parâmetros, mostra um card "foi isso que eu entendi" e **só aplica após confirmação**
+  — o veredito nunca muda sem o produtor validar o que foi entendido.
+  - Backend: `POST /api/interpretar` (frase) e `POST /api/interpretar-imagem` (foto de
+    romaneio de balança / nota fiscal) no backend leve. Extração via **API do Claude**
+    (SDK oficial, `claude-opus-4-8` com structured outputs) quando `ANTHROPIC_API_KEY`
+    está no `.env`; **sem chave**, frases caem no extrator local de regras pt-BR
+    (`src/services/extrator.js`, compartilhado front/servidor — testado com 8 frases
+    reais) e foto devolve erro claro. Sem backend nenhum, o front roda o mesmo extrator
+    no navegador — a feature nunca fica indisponível, só degrada com aviso.
+  - **A IA só extrai parâmetros — nunca calcula nem recomenda** (princípio do
+    documento-norte: o modelo chama/alimenta o serviço de cálculo, não chuta contas).
+  - Voz: Web Speech API do navegador (pt-BR, grátis; Chrome/Edge sim, Firefox não —
+    o botão só aparece quando suportado). Orquestração: `src/services/conversa.js`.
 - **Perfil persistente do produtor** (`src/services/perfil.js`, localStorage
   `graocerto.perfil.v1`): na primeira visita um formulário coleta região, cultura
   principal, custos e capacidade de armazenagem; depois tudo nasce pré-preenchido e o
@@ -65,7 +80,8 @@ Visão de longo prazo (não implementar ainda, só para contexto):
    `server/cotacoes-proxy.mjs` puxando o dado **ao vivo** do CEPEA. Pendências menores:
    - Ao **deploy** (passo 5), o proxy precisa virar função serverless (ex.: `/api` na Vercel)
      e apontar `VITE_COTACOES_ENDPOINT` para ela em produção; hoje o dado ao vivo só roda
-     em dev (`dev:all`). Sem isso, produção usa o snapshot.
+     em dev (`dev:all`). Sem isso, produção usa o snapshot. O mesmo vale para
+     `/api/interpretar*` (entrada conversacional), com `ANTHROPIC_API_KEY` como env da função.
    - Considerar respeitar mais o CEPEA: cache compartilhado/mais longo, e um cron diário que
      também atualiza `public/cotacoes.json` (mantém o fallback fresco).
 3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
