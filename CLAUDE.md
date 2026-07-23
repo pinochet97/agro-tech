@@ -109,11 +109,23 @@ Visão de longo prazo (não implementar ainda, só para contexto):
    - Considerar respeitar mais o CEPEA: cache compartilhado/mais longo, e um cron diário que
      também atualiza `public/cotacoes.json` (mantém o fallback fresco).
 3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
+   *(o item 5, deploy, foi adiantado — ver abaixo)*
 4. ~~Persistência simples das simulações do produtor (começar com backend leve ou local).~~
    ✅ Feito em localStorage: perfil persistente (região, cultura, custos, capacidade,
    defaults regionais) + histórico das últimas 5 simulações com revisitar/comparar.
    Fica para depois: contas + sincronização via backend (quando houver login).
-5. Preparar deploy (Vercel) para enviar link nas entrevistas de validação com produtores.
+5. ~~Preparar deploy (Vercel) para enviar link nas entrevistas de validação com produtores.~~
+   ✅ Publicado (jul/2026) no projeto **graocerto** do time Vercel `vortex-pay`, via deploy
+   direto de arquivos (conector claude.ai; ainda sem git conectado):
+   **https://graocerto-vortex-pay.vercel.app**
+   - Front estático (Vite) + funções serverless `api/*.mjs` sobre `server/nucleo.mjs`.
+   - Pendências manuais no painel da Vercel (Settings do projeto):
+     1. **Deployment Protection → Vercel Authentication → Disabled** — vem LIGADA por
+        padrão e bloqueia o site/APIs para visitantes (o link só abre pro dono logado).
+     2. **Environment Variables → ANTHROPIC_API_KEY** — sem ela, texto cai nas regras
+        e foto de romaneio/NF fica indisponível em produção (degradação já tratada).
+     3. **Git → Connect** ao repositório GitHub quando criado (aí todo push publica).
+   - Deploys futuros: conectar o GitHub (acima) ou repetir o deploy direto.
 
 ## Convenções
 - Toda a interface em português do Brasil, linguagem simples de produtor (sacas, R$/saca, entressafra).
