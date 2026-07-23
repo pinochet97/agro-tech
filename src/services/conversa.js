@@ -13,7 +13,7 @@
 //   nem todo navegador suporta (Chrome/Edge sim, Firefox não).
 // ─────────────────────────────────────────────────────────────
 
-import { extrairParametros } from "./extrator";
+import { extrairParametros, fraseLocalRecomendacao } from "./extrator";
 
 const TIMEOUT_MS = 90_000;
 
@@ -45,6 +45,23 @@ export async function interpretarTexto(texto) {
       resumo: null,
       fonte: "regras",
       aviso: "Backend fora do ar — interpretação por regras, no seu navegador.",
+    };
+  }
+}
+
+// Frase de recomendação para um lote. `retrato` traz o resultado JÁ
+// calculado pelo app (ver services/lotes.js) — a IA só o veste em
+// linguagem de produtor. Nunca lança: sem backend, monta localmente.
+export async function gerarRecomendacao(retrato) {
+  try {
+    const r = await postJson("/api/interpretar", { lote: retrato });
+    if (!r.frase_recomendacao) throw new Error("sem frase");
+    return { frase: r.frase_recomendacao, fonte: r.fonte, aviso: r.aviso || null };
+  } catch {
+    return {
+      frase: fraseLocalRecomendacao(retrato),
+      fonte: "regras",
+      aviso: "Backend fora do ar — frase montada no seu navegador.",
     };
   }
 }

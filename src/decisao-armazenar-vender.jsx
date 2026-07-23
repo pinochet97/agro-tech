@@ -1,21 +1,27 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
 import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
-import { interpretarTexto, interpretarImagem, vozSuportada, criarReconhecimentoVoz } from "./services/conversa";
+import {
+  interpretarTexto,
+  interpretarImagem,
+  gerarRecomendacao,
+  vozSuportada,
+  criarReconhecimentoVoz,
+} from "./services/conversa";
 import { listarSimulacoes, salvarSimulacaoHistorico, excluirSimulacao, MAX_SIMULACOES } from "./services/simulacoes";
+import { CULTURAS, criarLote, calcularLote, consolidar, retratoParaIA } from "./services/lotes";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
 // Ferramenta de decisão de comercialização para o médio produtor
 // Paleta: campo claro #F2F4EF · tinta #1E2A22 · milho #C99B2F ·
 //         soja #3E6B4F · alerta #A4432E
+//
+// A safra é modelada como LOTES independentes (services/lotes.js):
+// cada um tem cultura, volume, preços, horizonte e custos próprios,
+// e é calculado separadamente. Com mais de um lote, aparece também a
+// visão consolidada da safra.
 // ─────────────────────────────────────────────────────────────
-
-const CULTURAS = {
-  soja: { nome: "Soja", precoHoje: 125, precoEsperado: 138, kgSaca: 60 },
-  milho: { nome: "Milho", precoHoje: 58, precoEsperado: 67, kgSaca: 60 },
-  trigo: { nome: "Trigo", precoHoje: 72, precoEsperado: 79, kgSaca: 60 },
-};
 
 const fmtBRL = (v, dec = 0) =>
   v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -34,23 +40,23 @@ const fmtDataHora = (iso) => {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-// Linhas da tabela de comparação de simulações salvas.
+const plMeses = (n) => `${n} ${n === 1 ? "mês" : "meses"}`;
+
+// Linhas da tabela de comparação de simulações salvas (visão consolidada).
 const LINHAS_COMPARACAO = [
-  ["Cultura", (s) => CULTURAS[s.cultura]?.nome || s.cultura],
-  ["Sacas", (s) => fmtBRL(s.sacas)],
-  ["Horizonte", (s) => `${s.meses} ${s.meses === 1 ? "mês" : "meses"}`],
-  ["Preço hoje", (s) => `R$ ${fmtBRL(s.precoHoje, 2)}`],
-  ["Preço esperado", (s) => `R$ ${fmtBRL(s.precoEsperado, 2)}`],
-  ["Veredito", (s) => (s.resultado.veredito === "armazenar" ? "Armazenar" : "Vender")],
+  ["Lotes", (s) => String(s.consolidado.nLotes)],
+  ["Culturas", (s) => (s.consolidado.culturas || []).map((c) => CULTURAS[c]?.nome || c).join(", ")],
+  ["Sacas", (s) => fmtBRL(s.consolidado.totalSacas)],
+  ["Veredito", (s) => (s.consolidado.veredito === "armazenar" ? "Armazenar" : "Vender")],
   [
     "Vantagem/saca",
-    (s) => `${s.resultado.vantagemPorSaca >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.resultado.vantagemPorSaca), 2)}`,
+    (s) => `${s.consolidado.vantagemPorSaca >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.consolidado.vantagemPorSaca), 2)}`,
   ],
   [
     "Vantagem total",
-    (s) => `${s.resultado.vantagemTotal >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.resultado.vantagemTotal))}`,
+    (s) => `${s.consolidado.vantagemTotal >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.consolidado.vantagemTotal))}`,
   ],
-  ["Preço de empate", (s) => `R$ ${fmtBRL(s.resultado.precoEmpate, 2)}`],
+  ["Custo de segurar", (s) => `R$ ${fmtBRL(s.consolidado.custoTotalSegurar)}`],
 ];
 
 // Como exibir cada parâmetro extraído no card "foi isso que entendi".
@@ -59,12 +65,17 @@ const ROTULOS_CAMPOS = {
   sacas: ["Quantidade", (v) => `${fmtBRL(v)} sacas`],
   precoHoje: ["Preço hoje", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
   precoEsperado: ["Preço esperado", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
-  meses: ["Horizonte", (v) => `${v} ${v === 1 ? "mês" : "meses"}`],
+  meses: ["Horizonte", (v) => plMeses(v)],
   jurosMes: ["Custo do dinheiro", (v) => `${fmtBRL(v, 2)}% a.m.`],
   custoArmz: ["Armazenagem", (v) => `R$ ${fmtBRL(v, 2)}/saca/mês`],
   perdaMes: ["Perda técnica", (v) => `${fmtBRL(v, 2)}% ao mês`],
   dataDocumento: ["Data do documento", (v) => String(v)],
 };
+
+// Assinatura das entradas de um lote — muda quando o resultado muda, e é
+// assim que sabemos que a frase de recomendação ficou desatualizada.
+const assinaturaLote = (l) =>
+  JSON.stringify([l.cultura, l.sacas, l.precoHoje, l.precoEsperado, l.meses, l.custos]);
 
 function Campo({ rotulo, sufixo, valor, onChange, passo = 1, min = 0, ajuda }) {
   return (
@@ -94,23 +105,62 @@ export default function App() {
   const [editandoPerfil, setEditandoPerfil] = useState(false);
   const [simSalva, setSimSalva] = useState(false);
 
-  const culturaInicial = perfil?.culturaPrincipal || "soja";
-  const [cultura, setCultura] = useState(culturaInicial);
-  const [sacas, setSacas] = useState(perfil?.sacas ?? 10000);
-  const [precoHoje, setPrecoHoje] = useState(CULTURAS[culturaInicial].precoHoje);
-  const [precoEsperado, setPrecoEsperado] = useState(CULTURAS[culturaInicial].precoEsperado);
-  const [meses, setMeses] = useState(perfil?.meses ?? 6);
-  const [custoArmz, setCustoArmz] = useState(perfil?.custos?.armazenagem ?? 1.2); // R$/saca/mês
-  const [jurosMes, setJurosMes] = useState(perfil?.custos?.jurosMes ?? 1.1); // % a.m.
-  const [perdaMes, setPerdaMes] = useState(perfil?.custos?.perdaMes ?? 0.25); // % da massa/mês
+  // ── Lotes: o estado central da safra ──────────────────────────
+  const [lotes, setLotes] = useState(() => [
+    criarLote({
+      cultura: perfil?.culturaPrincipal,
+      sacas: perfil?.sacas,
+      meses: perfil?.meses,
+      custos: perfil?.custos && {
+        armazenagem: perfil.custos.armazenagem,
+        jurosMes: perfil.custos.jurosMes,
+        perdaMes: perfil.custos.perdaMes,
+      },
+    }),
+  ]);
+
+  const resultados = useMemo(() => lotes.map(calcularLote), [lotes]);
+  const consolidado = useMemo(() => consolidar(lotes, resultados), [lotes, resultados]);
+
+  // Altera campos de um lote (mescla `custos` quando vier).
+  const mudarLote = useCallback((id, campos) => {
+    setLotes((ls) =>
+      ls.map((l) =>
+        l.id === id
+          ? { ...l, ...campos, custos: campos.custos ? { ...l.custos, ...campos.custos } : l.custos }
+          : l,
+      ),
+    );
+  }, []);
+
+  const adicionarLote = () => {
+    // Novo lote herda cultura e custos do último — o produtor costuma
+    // fatiar a mesma safra ("vendo 30% agora, seguro 70%").
+    const ultimo = lotes[lotes.length - 1];
+    setLotes((ls) => [
+      ...ls,
+      criarLote({
+        cultura: ultimo?.cultura,
+        precoHoje: ultimo?.precoHoje,
+        precoEsperado: ultimo?.precoEsperado,
+        meses: ultimo?.meses,
+        custos: ultimo?.custos,
+        precoEditado: ultimo?.precoEditado,
+      }),
+    ]);
+  };
+
+  const excluirLote = (id) => {
+    setLotes((ls) => (ls.length > 1 ? ls.filter((l) => l.id !== id) : ls));
+    setFrases((f) => {
+      const { [id]: _fora, ...resto } = f;
+      return resto;
+    });
+  };
 
   // ── Cotação automática (CEPEA/ESALQ) ──────────────────────────
-  // cotacoes: mapa { soja: {...}, milho: {...} } | null
-  // statusCot: "carregando" | "ok" | "erro"
-  // precoEditado: o produtor mexeu no preço → não sobrescrever
   const [cotacoes, setCotacoes] = useState(null);
   const [statusCot, setStatusCot] = useState("carregando");
-  const [precoEditado, setPrecoEditado] = useState(false);
 
   const carregarCotacoes = useCallback(async () => {
     setStatusCot("carregando");
@@ -125,142 +175,131 @@ export default function App() {
     }
   }, []);
 
-  // Busca uma vez ao abrir a tela.
   useEffect(() => {
     carregarCotacoes();
   }, [carregarCotacoes]);
 
-  // Aplica a cotação ao "preço hoje" da cultura atual, desde que o
-  // produtor ainda não tenha digitado um preço manualmente.
+  // Aplica a cotação a cada lote cujo preço o produtor ainda não digitou.
   useEffect(() => {
-    if (precoEditado || !cotacoes) return;
-    const cot = cotacoes[cultura];
-    if (cot && typeof cot.preco === "number") setPrecoHoje(cot.preco);
-  }, [cotacoes, cultura, precoEditado]);
+    if (!cotacoes) return;
+    setLotes((ls) => {
+      let mudou = false;
+      const novo = ls.map((l) => {
+        if (l.precoEditado) return l;
+        const cot = cotacoes[l.cultura];
+        if (cot && typeof cot.preco === "number" && l.precoHoje !== cot.preco) {
+          mudou = true;
+          return { ...l, precoHoje: cot.preco };
+        }
+        return l;
+      });
+      return mudou ? novo : ls; // mesma referência = sem re-render em loop
+    });
+  }, [cotacoes]);
 
-  const cotacaoAtual = cotacoes?.[cultura] || null;
-
-  const trocarCultura = (c) => {
-    setCultura(c);
-    const cot = cotacoes?.[c];
-    setPrecoHoje(cot?.preco ?? CULTURAS[c].precoHoje);
-    setPrecoEsperado(CULTURAS[c].precoEsperado);
-    setPrecoEditado(false);
-  };
-
-  // Marca o preço como manual quando o produtor digita no campo.
-  const editarPrecoHoje = (v) => {
-    setPrecoHoje(v);
-    setPrecoEditado(true);
-  };
-
-  // Botão "atualizar": rebusca e reaplica a cotação, descartando a edição manual.
-  const reaplicarCotacao = async () => {
+  // Rebusca a cotação e reaplica no lote, descartando a edição manual.
+  const reaplicarCotacao = async (id) => {
     const dados = await carregarCotacoes();
-    if (dados?.[cultura]) {
-      setPrecoHoje(dados[cultura].preco);
-      setPrecoEditado(false);
+    const lote = lotes.find((l) => l.id === id);
+    if (dados && lote && dados[lote.cultura]) {
+      mudarLote(id, { precoHoje: dados[lote.cultura].preco, precoEditado: false });
     }
   };
 
-  // Aplica o perfil (recém-salvo ou editado) aos campos da simulação.
+  const trocarCultura = (id, c) => {
+    const cot = cotacoes?.[c];
+    mudarLote(id, {
+      cultura: c,
+      precoHoje: cot?.preco ?? CULTURAS[c].precoHoje,
+      precoEsperado: CULTURAS[c].precoEsperado,
+      precoEditado: false,
+    });
+  };
+
+  // Aplica o perfil (recém-salvo ou editado) — reseta para um lote só.
   const aplicarPerfil = (p) => {
     setPerfil(p);
     setEditandoPerfil(false);
-    setCultura(p.culturaPrincipal);
     const cot = cotacoes?.[p.culturaPrincipal];
-    setPrecoHoje(cot?.preco ?? CULTURAS[p.culturaPrincipal].precoHoje);
-    setPrecoEsperado(CULTURAS[p.culturaPrincipal].precoEsperado);
-    setPrecoEditado(false);
-    setCustoArmz(p.custos.armazenagem);
-    setJurosMes(p.custos.jurosMes);
-    setPerdaMes(p.custos.perdaMes);
-    if (typeof p.sacas === "number") setSacas(p.sacas);
-    if (typeof p.meses === "number") setMeses(p.meses);
+    setLotes([
+      criarLote({
+        cultura: p.culturaPrincipal,
+        sacas: p.sacas,
+        meses: p.meses,
+        precoHoje: cot?.preco,
+        custos: p.custos,
+      }),
+    ]);
+    setFrases({});
   };
 
   const salvarPerfilDoForm = (dados) => aplicarPerfil(atualizarPerfil(dados));
 
-  const r = useMemo(() => {
-    const receitaAgora = precoHoje * sacas;
+  // ── Frases de recomendação, por lote ──────────────────────────
+  // { [loteId]: { texto, fonte, aviso, assinatura } } — a assinatura diz
+  // se a frase ainda corresponde aos números na tela.
+  const [frases, setFrases] = useState({});
+  const [gerando, setGerando] = useState(null); // id do lote em geração
 
-    const perdaTotal = 1 - Math.pow(1 - perdaMes / 100, meses);
-    const sacasFinais = sacas * (1 - perdaTotal);
-    const custoArmazenagem = custoArmz * meses * sacas;
-    // custo de oportunidade: o dinheiro parado no grão deixa de render (ou paga juros de dívida)
-    const custoCapital = receitaAgora * (Math.pow(1 + jurosMes / 100, meses) - 1);
-    const receitaFutura = precoEsperado * sacasFinais - custoArmazenagem;
-    const receitaFuturaLiquida = receitaFutura - custoCapital;
+  const pedirRecomendacao = async (lote, resultado) => {
+    setGerando(lote.id);
+    try {
+      const r = await gerarRecomendacao(retratoParaIA(lote, resultado));
+      setFrases((f) => ({
+        ...f,
+        [lote.id]: {
+          texto: r.frase,
+          fonte: r.fonte,
+          aviso: r.aviso,
+          assinatura: assinaturaLote(lote),
+        },
+      }));
+    } finally {
+      setGerando(null);
+    }
+  };
 
-    const vantagemTotal = receitaFuturaLiquida - receitaAgora;
-    const vantagemPorSaca = vantagemTotal / sacas;
-
-    // preço de empate: quanto a saca precisa valer na entressafra para compensar
-    const precoEmpate =
-      (receitaAgora + custoArmazenagem + custoCapital) / sacasFinais;
-
-    return {
-      receitaAgora,
-      receitaFuturaLiquida,
-      custoArmazenagem,
-      custoCapital,
-      perdaTotal,
-      sacasFinais,
-      vantagemTotal,
-      vantagemPorSaca,
-      precoEmpate,
-      armazenar: vantagemTotal > 0,
-    };
-  }, [sacas, precoHoje, precoEsperado, meses, custoArmz, jurosMes, perdaMes]);
-
-  const margem = Math.abs(r.vantagemPorSaca);
-  const decisaoFraca = margem < 2; // menos de R$2/saca de diferença = zona cinzenta
-
-  // ── Histórico de simulações (localStorage, últimas MAX_SIMULACOES) ──
+  // ── Histórico de simulações (localStorage) ────────────────────
   const [simulacoes, setSimulacoes] = useState(() => listarSimulacoes());
   const [comparando, setComparando] = useState(false);
 
-  // Cada simulação salva atualiza o perfil (pré-preenchimento) E entra
-  // no histórico com ID + timestamp, para revisitar e comparar.
+  // Salvar: atualiza o perfil (a partir do 1º lote) e grava a safra inteira.
   const salvarSimulacao = () => {
+    const principal = lotes[0];
     const novo = atualizarPerfil({
-      culturaPrincipal: cultura,
-      sacas,
-      meses,
-      custos: { armazenagem: custoArmz, jurosMes, perdaMes },
+      culturaPrincipal: principal.cultura,
+      sacas: principal.sacas,
+      meses: principal.meses,
+      custos: { ...principal.custos },
     });
     setPerfil(novo);
     setSimulacoes(
       salvarSimulacaoHistorico({
-        cultura,
-        sacas,
-        meses,
-        precoHoje,
-        precoEsperado,
-        custos: { armazenagem: custoArmz, jurosMes, perdaMes },
-        resultado: {
-          veredito: r.armazenar ? "armazenar" : "vender",
-          vantagemPorSaca: r.vantagemPorSaca,
-          vantagemTotal: r.vantagemTotal,
-          precoEmpate: r.precoEmpate,
-        },
+        lotes: lotes.map((l, i) => ({
+          cultura: l.cultura,
+          sacas: l.sacas,
+          meses: l.meses,
+          precoHoje: l.precoHoje,
+          precoEsperado: l.precoEsperado,
+          custos: { ...l.custos },
+          resultado: {
+            veredito: resultados[i].veredito,
+            vantagemPorSaca: resultados[i].vantagemPorSaca,
+            vantagemTotal: resultados[i].vantagemTotal,
+            precoEmpate: resultados[i].precoEmpate,
+          },
+        })),
+        consolidado,
       }),
     );
     setSimSalva(true);
     setTimeout(() => setSimSalva(false), 2500);
   };
 
-  // Reabre uma simulação salva: todos os campos voltam como estavam.
+  // Reabre uma simulação salva: todos os lotes voltam como estavam.
   const abrirSimulacao = (s) => {
-    setCultura(s.cultura);
-    setSacas(s.sacas);
-    setMeses(s.meses);
-    setPrecoHoje(s.precoHoje);
-    setPrecoEditado(true); // preço da simulação salva; a cotação não sobrescreve
-    setPrecoEsperado(s.precoEsperado);
-    setCustoArmz(s.custos.armazenagem);
-    setJurosMes(s.custos.jurosMes);
-    setPerdaMes(s.custos.perdaMes);
+    setLotes(s.lotes.map((l) => criarLote({ ...l, precoEditado: true })));
+    setFrases({});
   };
 
   // ── Entrada conversacional (texto, voz, foto) ─────────────────
@@ -272,6 +311,7 @@ export default function App() {
   const [erroConversa, setErroConversa] = useState(null);
   const [gravando, setGravando] = useState(false);
   const [vozOk] = useState(() => vozSuportada());
+  const [alvo, setAlvo] = useState("novo"); // id do lote destino ou "novo"
   const reconhecimentoRef = useRef(null);
   const fotoInputRef = useRef(null);
 
@@ -328,36 +368,56 @@ export default function App() {
     rec.start();
   };
 
-  // Aplica os parâmetros confirmados; só então o veredito muda.
+  // Aplica os parâmetros confirmados — num lote existente ou num novo.
   const aplicarEntendimento = () => {
     const c = entendimento.campos;
-    const trocouCultura = c.cultura && CULTURAS[c.cultura] && c.cultura !== cultura;
-    if (trocouCultura) {
-      setCultura(c.cultura);
-      setPrecoEsperado(c.precoEsperado ?? CULTURAS[c.cultura].precoEsperado);
-      if (c.precoHoje != null) {
-        setPrecoHoje(c.precoHoje);
-        setPrecoEditado(true); // preço veio do produtor, não sobrescrever com cotação
-      } else {
-        const cot = cotacoes?.[c.cultura];
-        setPrecoHoje(cot?.preco ?? CULTURAS[c.cultura].precoHoje);
-        setPrecoEditado(false);
-      }
+    const custos = {};
+    if (c.custoArmz != null) custos.armazenagem = c.custoArmz;
+    if (c.jurosMes != null) custos.jurosMes = c.jurosMes;
+    if (c.perdaMes != null) custos.perdaMes = c.perdaMes;
+
+    if (alvo === "novo") {
+      const base = lotes[lotes.length - 1];
+      const cultura = c.cultura && CULTURAS[c.cultura] ? c.cultura : base.cultura;
+      const cot = cotacoes?.[cultura];
+      const novo = criarLote({
+        cultura,
+        sacas: c.sacas ?? base.sacas,
+        meses: c.meses ?? base.meses,
+        precoHoje: c.precoHoje ?? cot?.preco ?? CULTURAS[cultura].precoHoje,
+        precoEsperado: c.precoEsperado ?? CULTURAS[cultura].precoEsperado,
+        custos: { ...base.custos, ...custos },
+        precoEditado: c.precoHoje != null,
+      });
+      setLotes((ls) => [...ls, novo]);
+      setAlvo(novo.id);
     } else {
+      const atual = lotes.find((l) => l.id === alvo);
+      if (!atual) return;
+      const trocouCultura = c.cultura && CULTURAS[c.cultura] && c.cultura !== atual.cultura;
+      const cultura = trocouCultura ? c.cultura : atual.cultura;
+      const campos = { cultura };
+      if (c.sacas != null) campos.sacas = c.sacas;
+      if (c.meses != null) campos.meses = c.meses;
+      if (Object.keys(custos).length) campos.custos = custos;
+
       if (c.precoHoje != null) {
-        setPrecoHoje(c.precoHoje);
-        setPrecoEditado(true);
+        campos.precoHoje = c.precoHoje;
+        campos.precoEditado = true; // veio do produtor: cotação não sobrescreve
+      } else if (trocouCultura) {
+        campos.precoHoje = cotacoes?.[cultura]?.preco ?? CULTURAS[cultura].precoHoje;
+        campos.precoEditado = false;
       }
-      if (c.precoEsperado != null) setPrecoEsperado(c.precoEsperado);
+      if (c.precoEsperado != null) campos.precoEsperado = c.precoEsperado;
+      else if (trocouCultura) campos.precoEsperado = CULTURAS[cultura].precoEsperado;
+
+      mudarLote(alvo, campos);
     }
-    if (c.sacas != null) setSacas(c.sacas);
-    if (c.meses != null) setMeses(c.meses);
-    if (c.jurosMes != null) setJurosMes(c.jurosMes);
-    if (c.custoArmz != null) setCustoArmz(c.custoArmz);
-    if (c.perdaMes != null) setPerdaMes(c.perdaMes);
     setEntendimento(null);
     setFraseConversa("");
   };
+
+  const nomeLote = (l, i) => `Lote ${i + 1} · ${CULTURAS[l.cultura]?.nome || l.cultura}`;
 
   return (
     <div style={st.pagina}>
@@ -366,6 +426,8 @@ export default function App() {
         * { box-sizing: border-box; }
         input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid #C99B2F; outline-offset: 2px; }
         input[type=range] { accent-color: #C99B2F; }
+        details > summary { cursor: pointer; list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
@@ -400,299 +462,206 @@ export default function App() {
           />
         </main>
       ) : (
-      <>
-      <section style={st.conversaPainel}>
-        <h2 style={st.tituloSecao}>Fale com o GrãoCerto</h2>
-        <p style={st.formIntro}>
-          Conte como está sua safra — por texto, voz ou foto de romaneio de balança / nota
-          fiscal — que eu preencho a simulação. Ex.: “colhi 12 mil sacas de soja, tô devendo
-          no banco a 1,2 ao mês”.
-        </p>
-        <textarea
-          value={fraseConversa}
-          onChange={(e) => setFraseConversa(e.target.value)}
-          rows={2}
-          style={st.conversaInput}
-          placeholder={gravando ? "Ouvindo… pode falar" : "Escreva aqui ou use o microfone…"}
-          disabled={interpretando}
-        />
-        <div style={st.conversaAcoes}>
-          <button
-            type="button"
-            style={st.btnPrimario}
-            onClick={enviarFrase}
-            disabled={interpretando || !fraseConversa.trim()}
-          >
-            {interpretando ? "Interpretando…" : "Interpretar"}
-          </button>
-          {vozOk && (
-            <button
-              type="button"
-              style={{ ...st.btnSecundario, ...(gravando ? st.btnGravando : {}) }}
-              onClick={alternarVoz}
-              disabled={interpretando}
-            >
-              {gravando ? "■ Parar" : "🎤 Falar"}
-            </button>
-          )}
-          <button
-            type="button"
-            style={st.btnSecundario}
-            onClick={() => fotoInputRef.current?.click()}
-            disabled={interpretando}
-          >
-            📷 Foto de romaneio/NF
-          </button>
-          <input
-            ref={fotoInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            style={{ display: "none" }}
-            onChange={enviarFoto}
-          />
-        </div>
-
-        {erroConversa && <div style={st.conversaErro}>{erroConversa}</div>}
-
-        {entendimento && (
-          <div style={st.entendimento}>
-            <div style={st.entendimentoTitulo}>
-              Foi isso que eu entendi
-              {entendimento.fonte === "documento"
-                ? " do documento"
-                : entendimento.fonte === "regras"
-                  ? " (por regras, sem IA)"
-                  : ""}
-              :
-            </div>
-            {entendimento.resumo && (
-              <p style={st.entendimentoResumo}>“{entendimento.resumo}”</p>
-            )}
-            <ul style={st.entendimentoLista}>
-              {Object.entries(entendimento.campos).map(([k, v]) =>
-                ROTULOS_CAMPOS[k] ? (
-                  <li key={k} style={st.entendimentoItem}>
-                    <span>{ROTULOS_CAMPOS[k][0]}</span>
-                    <strong style={st.entendimentoValor}>{ROTULOS_CAMPOS[k][1](v)}</strong>
-                  </li>
-                ) : null,
-              )}
-            </ul>
-            <p style={st.entendimentoNota}>
-              O que não foi dito continua como está na simulação. Confira antes de confirmar.
+        <>
+          <section style={st.conversaPainel}>
+            <h2 style={st.tituloSecao}>Fale com o GrãoCerto</h2>
+            <p style={st.formIntro}>
+              Conte como está sua safra — por texto, voz ou foto de romaneio de balança / nota
+              fiscal — que eu preencho a simulação. Ex.: “colhi 12 mil sacas de soja, tô devendo
+              no banco a 1,2 ao mês”.
             </p>
-            {entendimento.aviso && <p style={st.entendimentoAviso}>{entendimento.aviso}</p>}
-            <div style={st.formAcoes}>
-              <button type="button" style={st.btnPrimario} onClick={aplicarEntendimento}>
-                Confirmar e simular
-              </button>
-              <button type="button" style={st.btnSecundario} onClick={() => setEntendimento(null)}>
-                Descartar
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <main style={st.grade}>
-        {/* Coluna de entrada */}
-        <section style={st.painel}>
-          <h2 style={st.tituloSecao}>Sua safra</h2>
-
-          <div style={st.abas} role="tablist" aria-label="Cultura">
-            {Object.entries(CULTURAS).map(([k, c]) => (
+            <textarea
+              value={fraseConversa}
+              onChange={(e) => setFraseConversa(e.target.value)}
+              rows={2}
+              style={st.conversaInput}
+              placeholder={gravando ? "Ouvindo… pode falar" : "Escreva aqui ou use o microfone…"}
+              disabled={interpretando}
+            />
+            <div style={st.conversaAcoes}>
               <button
-                key={k}
-                role="tab"
-                aria-selected={cultura === k}
-                onClick={() => trocarCultura(k)}
-                style={{
-                  ...st.aba,
-                  ...(cultura === k ? st.abaAtiva : {}),
-                }}
+                type="button"
+                style={st.btnPrimario}
+                onClick={enviarFrase}
+                disabled={interpretando || !fraseConversa.trim()}
               >
-                {c.nome}
+                {interpretando ? "Interpretando…" : "Interpretar"}
               </button>
-            ))}
-          </div>
-
-          <Campo rotulo="Quantidade" sufixo="sacas" valor={sacas} onChange={setSacas} passo={500} />
-          {perfil?.capacidadeSacas > 0 && sacas > perfil.capacidadeSacas && (
-            <div style={st.capacidadeAviso}>
-              Acima da sua capacidade de armazenagem ({fmtBRL(perfil.capacidadeSacas)} sacas) —
-              o excedente precisaria de armazém de terceiro.
+              {vozOk && (
+                <button
+                  type="button"
+                  style={{ ...st.btnSecundario, ...(gravando ? st.btnGravando : {}) }}
+                  onClick={alternarVoz}
+                  disabled={interpretando}
+                >
+                  {gravando ? "■ Parar" : "🎤 Falar"}
+                </button>
+              )}
+              <button
+                type="button"
+                style={st.btnSecundario}
+                onClick={() => fotoInputRef.current?.click()}
+                disabled={interpretando}
+              >
+                📷 Foto de romaneio/NF
+              </button>
+              <input
+                ref={fotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: "none" }}
+                onChange={enviarFoto}
+              />
             </div>
-          )}
-          <Campo
-            rotulo="Preço hoje na sua região"
-            sufixo="R$/saca"
-            valor={precoHoje}
-            onChange={editarPrecoHoje}
-            passo={0.5}
-            ajuda="Preço balcão que você conseguiria vendendo esta semana"
-          />
 
-          <div style={st.cotacao}>
-            {statusCot === "carregando" && (
-              <span style={st.cotacaoInfo}>Buscando cotação…</span>
-            )}
-            {statusCot === "ok" && cotacaoAtual && (
-              <span style={st.cotacaoInfo}>
-                <span style={st.cotacaoPonto} aria-hidden="true" />
-                {cotacaoAtual.praca || "Indicador"}: R$ {fmtBRL(cotacaoAtual.preco, 2)}
-                {cotacaoAtual.data ? ` · ${fmtData(cotacaoAtual.data)}` : ""}
-                {cotacaoAtual.referencia ? " · referência" : ""}
-                {precoEditado ? " · ajustado por você" : ""}
-              </span>
-            )}
-            {statusCot === "ok" && !cotacaoAtual && (
-              <span style={st.cotacaoInfo}>
-                Sem cotação automática para {CULTURAS[cultura].nome} — informe manualmente.
-              </span>
-            )}
-            {statusCot === "erro" && (
-              <span style={st.cotacaoErro}>
-                Cotação automática indisponível — informe o preço manualmente.
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={reaplicarCotacao}
-              disabled={statusCot === "carregando"}
-              style={st.cotacaoBtn}
-            >
-              {statusCot === "carregando" ? "…" : "Atualizar"}
-            </button>
-          </div>
-          <Campo
-            rotulo="Quanto tempo pretende segurar"
-            sufixo="meses"
-            valor={meses}
-            onChange={setMeses}
-            passo={1}
-            min={1}
-          />
+            <label style={st.alvoLinha}>
+              <span style={st.alvoRotulo}>Aplicar em</span>
+              <select value={alvo} onChange={(e) => setAlvo(e.target.value)} style={st.alvoSelect}>
+                <option value="novo">＋ Novo lote</option>
+                {lotes.map((l, i) => (
+                  <option key={l.id} value={l.id}>
+                    {nomeLote(l, i)}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <h2 style={{ ...st.tituloSecao, marginTop: 28 }}>Custos de segurar o grão</h2>
-          <Campo
-            rotulo="Armazenagem"
-            sufixo="R$/saca/mês"
-            valor={custoArmz}
-            onChange={setCustoArmz}
-            passo={0.1}
-            ajuda="Silo próprio: energia + manutenção. Terceiro: tarifa cobrada"
-          />
-          <Campo
-            rotulo="Custo do dinheiro"
-            sufixo="% a.m."
-            valor={jurosMes}
-            onChange={setJurosMes}
-            passo={0.1}
-            ajuda="Juros da sua dívida — ou quanto o dinheiro renderia aplicado"
-          />
-          <Campo
-            rotulo="Perda técnica estimada"
-            sufixo="% ao mês"
-            valor={perdaMes}
-            onChange={setPerdaMes}
-            passo={0.05}
-            ajuda="Quebra de peso, pragas e deterioração no armazém"
-          />
-        </section>
+            {erroConversa && <div style={st.conversaErro}>{erroConversa}</div>}
 
-        {/* Coluna de resultado */}
-        <section style={st.colResultado}>
-          {/* Ticket de decisão — assinatura visual */}
-          <div
-            style={{
-              ...st.ticket,
-              borderColor: r.armazenar ? "#3E6B4F" : "#A4432E",
-            }}
-          >
-            <div style={st.ticketFuro} aria-hidden="true" />
-            <div style={st.ticketEyebrow}>ROMANEIO DE DECISÃO</div>
-            <div
-              style={{
-                ...st.ticketVeredito,
-                color: r.armazenar ? "#3E6B4F" : "#A4432E",
-              }}
-            >
-              {r.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
-            </div>
-            {decisaoFraca && (
-              <div style={st.ticketAviso}>
-                Diferença menor que R$ 2/saca — zona de empate. Qualquer variação de preço muda a conta.
+            {entendimento && (
+              <div style={st.entendimento}>
+                <div style={st.entendimentoTitulo}>
+                  Foi isso que eu entendi
+                  {entendimento.fonte === "documento"
+                    ? " do documento"
+                    : entendimento.fonte === "regras"
+                      ? " (por regras, sem IA)"
+                      : ""}
+                  :
+                </div>
+                {entendimento.resumo && (
+                  <p style={st.entendimentoResumo}>“{entendimento.resumo}”</p>
+                )}
+                <ul style={st.entendimentoLista}>
+                  {Object.entries(entendimento.campos).map(([k, v]) =>
+                    ROTULOS_CAMPOS[k] ? (
+                      <li key={k} style={st.entendimentoItem}>
+                        <span>{ROTULOS_CAMPOS[k][0]}</span>
+                        <strong style={st.entendimentoValor}>{ROTULOS_CAMPOS[k][1](v)}</strong>
+                      </li>
+                    ) : null,
+                  )}
+                </ul>
+                <p style={st.entendimentoNota}>
+                  Vai ser aplicado em{" "}
+                  <strong>
+                    {alvo === "novo"
+                      ? "um lote novo"
+                      : nomeLote(
+                          lotes.find((l) => l.id === alvo) || lotes[0],
+                          lotes.findIndex((l) => l.id === alvo),
+                        )}
+                  </strong>
+                  . O que não foi dito continua como está.
+                </p>
+                {entendimento.aviso && <p style={st.entendimentoAviso}>{entendimento.aviso}</p>}
+                <div style={st.formAcoes}>
+                  <button type="button" style={st.btnPrimario} onClick={aplicarEntendimento}>
+                    Confirmar e simular
+                  </button>
+                  <button type="button" style={st.btnSecundario} onClick={() => setEntendimento(null)}>
+                    Descartar
+                  </button>
+                </div>
               </div>
             )}
-            <div style={st.ticketDelta}>
-              <span style={st.ticketDeltaNum}>
-                {r.vantagemPorSaca >= 0 ? "+" : "−"} R$ {fmtBRL(margem, 2)}
-              </span>
-              <span style={st.ticketDeltaRotulo}>por saca {r.armazenar ? "segurando" : "vendendo já"}</span>
-            </div>
-            <div style={st.ticketTotal}>
-              {r.vantagemTotal >= 0 ? "+" : "−"} R$ {fmtBRL(Math.abs(r.vantagemTotal))} no total
-            </div>
-            <div style={st.ticketRodape}>
-              {CULTURAS[cultura].nome} · {fmtBRL(sacas)} sacas · horizonte {meses} {meses === 1 ? "mês" : "meses"}
-            </div>
-          </div>
+          </section>
 
-          <div style={st.salvarLinha}>
+          {/* Visão da safra inteira — só faz sentido com mais de um lote */}
+          {lotes.length > 1 && (
+            <section style={st.consolidadoPainel}>
+              <div style={st.simsCabecalho}>
+                <h2 style={{ ...st.tituloSecao, margin: 0 }}>
+                  Safra inteira · {consolidado.nLotes} lotes
+                </h2>
+                <span style={st.consolidadoSacas}>
+                  {fmtBRL(consolidado.totalSacas)} sacas ·{" "}
+                  {consolidado.culturas.map((c) => CULTURAS[c]?.nome || c).join(" + ")}
+                </span>
+              </div>
+              <div style={st.consolidadoGrade}>
+                <div>
+                  <span style={st.consolidadoRotulo}>Resultado somado</span>
+                  <span
+                    style={{
+                      ...st.consolidadoVeredito,
+                      color: consolidado.armazenar ? "#3E6B4F" : "#A4432E",
+                    }}
+                  >
+                    {consolidado.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
+                  </span>
+                </div>
+                <div>
+                  <span style={st.consolidadoRotulo}>Vantagem</span>
+                  <span style={st.consolidadoNum}>
+                    {consolidado.vantagemTotal >= 0 ? "+" : "−"} R${" "}
+                    {fmtBRL(Math.abs(consolidado.vantagemTotal))}
+                  </span>
+                  <span style={st.consolidadoSub}>
+                    {consolidado.vantagemPorSaca >= 0 ? "+" : "−"} R${" "}
+                    {fmtBRL(Math.abs(consolidado.vantagemPorSaca), 2)}/saca
+                  </span>
+                </div>
+                <div>
+                  <span style={st.consolidadoRotulo}>Custo de segurar tudo</span>
+                  <span style={st.consolidadoNum}>R$ {fmtBRL(consolidado.custoTotalSegurar)}</span>
+                  <span style={st.consolidadoSub}>armazenagem + dinheiro parado</span>
+                </div>
+              </div>
+              {consolidado.zonaCinzenta && (
+                <div style={st.ticketAviso}>
+                  Somando tudo, a diferença é menor que R$ 2/saca — zona de empate. Vale olhar lote
+                  a lote: pode compensar vender uns e segurar outros.
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Um cartão por lote: entradas + veredito + recomendação */}
+          {lotes.map((lote, i) => (
+            <CartaoLote
+              key={lote.id}
+              lote={lote}
+              indice={i}
+              resultado={resultados[i]}
+              cotacao={cotacoes?.[lote.cultura] || null}
+              statusCot={statusCot}
+              perfil={perfil}
+              podeExcluir={lotes.length > 1}
+              frase={frases[lote.id]}
+              gerando={gerando === lote.id}
+              onMudar={(campos) => mudarLote(lote.id, campos)}
+              onTrocarCultura={(c) => trocarCultura(lote.id, c)}
+              onAtualizarCotacao={() => reaplicarCotacao(lote.id)}
+              onExcluir={() => excluirLote(lote.id)}
+              onRecomendar={() => pedirRecomendacao(lote, resultados[i])}
+            />
+          ))}
+
+          <div style={st.acoesSafra}>
+            <button type="button" style={st.btnSecundario} onClick={adicionarLote}>
+              ＋ Adicionar lote
+            </button>
             <button type="button" style={st.btnSalvarSim} onClick={salvarSimulacao}>
               Salvar simulação
             </button>
             {simSalva && <span style={st.salvoFeedback}>✓ salva — seu perfil foi atualizado</span>}
           </div>
 
-          {/* Simulador de preço esperado */}
-          <div style={st.painel}>
-            <h2 style={st.tituloSecao}>E se o preço na entressafra for…</h2>
-            <div style={st.sliderLinha}>
-              <span style={st.sliderNum}>R$ {fmtBRL(precoEsperado, 2)}</span>
-              <span style={st.sliderRotulo}>/saca esperado em {meses} {meses === 1 ? "mês" : "meses"}</span>
-            </div>
-            <input
-              type="range"
-              min={Math.max(1, precoHoje * 0.8)}
-              max={precoHoje * 1.35}
-              step={0.5}
-              value={precoEsperado}
-              onChange={(e) => setPrecoEsperado(parseFloat(e.target.value))}
-              style={{ width: "100%" }}
-              aria-label="Preço esperado por saca"
-            />
-            <div style={st.empate}>
-              <span style={st.empateRotulo}>Preço de empate</span>
-              <span style={st.empateNum}>R$ {fmtBRL(r.precoEmpate, 2)}/saca</span>
-              <span style={st.empateExpl}>
-                Acima disso, segurar compensa. Abaixo, vender agora ganha.
-              </span>
-            </div>
-          </div>
-
-          {/* Composição da conta */}
-          <div style={st.painel}>
-            <h2 style={st.tituloSecao}>A conta, aberta</h2>
-            <Linha rotulo="Vendendo hoje" valor={r.receitaAgora} forte />
-            <Linha
-              rotulo={`Vendendo em ${meses} ${meses === 1 ? "mês" : "meses"} (líquido)`}
-              valor={r.receitaFuturaLiquida}
-              forte
-            />
-            <div style={st.divisor} />
-            <Linha rotulo="Custo de armazenagem" valor={-r.custoArmazenagem} />
-            <Linha rotulo="Custo do dinheiro parado" valor={-r.custoCapital} />
-            <Linha
-              rotulo={`Perda técnica (${(r.perdaTotal * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ≈ ${fmtBRL(sacas - r.sacasFinais)} sacas)`}
-              valor={-(sacas - r.sacasFinais) * precoEsperado}
-            />
-          </div>
-
           {/* Histórico: revisitar e comparar as últimas simulações */}
           {simulacoes.length > 0 && (
-            <div style={st.painel}>
+            <section style={st.historicoPainel}>
               <div style={st.simsCabecalho}>
                 <h2 style={{ ...st.tituloSecao, margin: 0 }}>
                   Simulações salvas ({simulacoes.length}/{MAX_SIMULACOES})
@@ -714,18 +683,22 @@ export default function App() {
                     <div style={st.simInfo}>
                       <span style={st.simData}>{fmtDataHora(s.criadaEm)}</span>
                       <span style={st.simDesc}>
-                        {CULTURAS[s.cultura]?.nome || s.cultura} · {fmtBRL(s.sacas)} sc ·{" "}
-                        {s.meses} {s.meses === 1 ? "mês" : "meses"}
+                        {s.consolidado.nLotes}{" "}
+                        {s.consolidado.nLotes === 1 ? "lote" : "lotes"} ·{" "}
+                        {fmtBRL(s.consolidado.totalSacas)} sc ·{" "}
+                        {(s.consolidado.culturas || [])
+                          .map((c) => CULTURAS[c]?.nome || c)
+                          .join(" + ")}
                       </span>
                       <span
                         style={{
                           ...st.simVeredito,
-                          color: s.resultado.veredito === "armazenar" ? "#3E6B4F" : "#A4432E",
+                          color: s.consolidado.veredito === "armazenar" ? "#3E6B4F" : "#A4432E",
                         }}
                       >
-                        {s.resultado.veredito === "armazenar" ? "ARMAZENAR" : "VENDER"} ·{" "}
-                        {s.resultado.vantagemPorSaca >= 0 ? "+" : "−"} R${" "}
-                        {fmtBRL(Math.abs(s.resultado.vantagemPorSaca), 2)}/sc
+                        {s.consolidado.veredito === "armazenar" ? "ARMAZENAR" : "VENDER"} ·{" "}
+                        {s.consolidado.vantagemPorSaca >= 0 ? "+" : "−"} R${" "}
+                        {fmtBRL(Math.abs(s.consolidado.vantagemPorSaca), 2)}/sc
                       </span>
                     </div>
                     <div style={st.simAcoes}>
@@ -772,19 +745,297 @@ export default function App() {
                   </table>
                 </div>
               )}
-            </div>
+            </section>
           )}
 
           <p style={st.aviso}>
             Protótipo para validação. O preço pode ser informado manualmente ou puxado da
             cotação de referência — a versão de produção usará cotações CEPEA/B3 e clima em
-            tempo real. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0). Não é recomendação de investimento.
+            tempo real. As orientações explicam a conta de custo do próprio app; não são
+            recomendação de investimento. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0).
           </p>
-        </section>
-      </main>
-      </>
+        </>
       )}
     </div>
+  );
+}
+
+// ── Cartão de um lote: entradas à esquerda, decisão à direita ──
+function CartaoLote({
+  lote,
+  indice,
+  resultado,
+  cotacao,
+  statusCot,
+  perfil,
+  podeExcluir,
+  frase,
+  gerando,
+  onMudar,
+  onTrocarCultura,
+  onAtualizarCotacao,
+  onExcluir,
+  onRecomendar,
+}) {
+  const margem = Math.abs(resultado.vantagemPorSaca);
+  const fraseAtual = frase && frase.assinatura === assinaturaLote(lote);
+
+  return (
+    <section style={st.loteBloco}>
+      <div style={st.loteCabecalho}>
+        <span style={st.loteTitulo}>
+          Lote {indice + 1} · {CULTURAS[lote.cultura]?.nome || lote.cultura} ·{" "}
+          {fmtBRL(lote.sacas)} sacas
+        </span>
+        {podeExcluir && (
+          <button
+            type="button"
+            style={st.simBtnExcluir}
+            onClick={onExcluir}
+            aria-label={`Excluir lote ${indice + 1}`}
+          >
+            × Excluir lote
+          </button>
+        )}
+      </div>
+
+      <div style={st.grade}>
+        {/* Coluna de entrada */}
+        <div style={st.painel}>
+          <h2 style={st.tituloSecao}>Este lote</h2>
+
+          <div style={st.abas} role="tablist" aria-label="Cultura">
+            {Object.entries(CULTURAS).map(([k, c]) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={lote.cultura === k}
+                onClick={() => onTrocarCultura(k)}
+                style={{ ...st.aba, ...(lote.cultura === k ? st.abaAtiva : {}) }}
+              >
+                {c.nome}
+              </button>
+            ))}
+          </div>
+
+          <Campo
+            rotulo="Quantidade"
+            sufixo="sacas"
+            valor={lote.sacas}
+            onChange={(v) => onMudar({ sacas: v })}
+            passo={500}
+          />
+          {perfil?.capacidadeSacas > 0 && lote.sacas > perfil.capacidadeSacas && (
+            <div style={st.capacidadeAviso}>
+              Acima da sua capacidade de armazenagem ({fmtBRL(perfil.capacidadeSacas)} sacas) —
+              o excedente precisaria de armazém de terceiro.
+            </div>
+          )}
+          <Campo
+            rotulo="Preço hoje na sua região"
+            sufixo="R$/saca"
+            valor={lote.precoHoje}
+            onChange={(v) => onMudar({ precoHoje: v, precoEditado: true })}
+            passo={0.5}
+            ajuda="Preço balcão que você conseguiria vendendo esta semana"
+          />
+
+          <div style={st.cotacao}>
+            {statusCot === "carregando" && <span style={st.cotacaoInfo}>Buscando cotação…</span>}
+            {statusCot === "ok" && cotacao && (
+              <span style={st.cotacaoInfo}>
+                <span style={st.cotacaoPonto} aria-hidden="true" />
+                {cotacao.praca || "Indicador"}: R$ {fmtBRL(cotacao.preco, 2)}
+                {cotacao.data ? ` · ${fmtData(cotacao.data)}` : ""}
+                {cotacao.referencia ? " · referência" : ""}
+                {lote.precoEditado ? " · ajustado por você" : ""}
+              </span>
+            )}
+            {statusCot === "ok" && !cotacao && (
+              <span style={st.cotacaoInfo}>
+                Sem cotação automática para {CULTURAS[lote.cultura].nome} — informe manualmente.
+              </span>
+            )}
+            {statusCot === "erro" && (
+              <span style={st.cotacaoErro}>
+                Cotação automática indisponível — informe o preço manualmente.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onAtualizarCotacao}
+              disabled={statusCot === "carregando"}
+              style={st.cotacaoBtn}
+            >
+              {statusCot === "carregando" ? "…" : "Atualizar"}
+            </button>
+          </div>
+
+          <Campo
+            rotulo="Quanto tempo pretende segurar"
+            sufixo="meses"
+            valor={lote.meses}
+            onChange={(v) => onMudar({ meses: v })}
+            passo={1}
+            min={1}
+          />
+
+          <h2 style={{ ...st.tituloSecao, marginTop: 28 }}>Custos de segurar este lote</h2>
+          <Campo
+            rotulo="Armazenagem"
+            sufixo="R$/saca/mês"
+            valor={lote.custos.armazenagem}
+            onChange={(v) => onMudar({ custos: { armazenagem: v } })}
+            passo={0.1}
+            ajuda="Silo próprio: energia + manutenção. Terceiro: tarifa cobrada"
+          />
+          <Campo
+            rotulo="Custo do dinheiro"
+            sufixo="% a.m."
+            valor={lote.custos.jurosMes}
+            onChange={(v) => onMudar({ custos: { jurosMes: v } })}
+            passo={0.1}
+            ajuda="Juros da sua dívida — ou quanto o dinheiro renderia aplicado"
+          />
+          <Campo
+            rotulo="Perda técnica estimada"
+            sufixo="% ao mês"
+            valor={lote.custos.perdaMes}
+            onChange={(v) => onMudar({ custos: { perdaMes: v } })}
+            passo={0.05}
+            ajuda="Quebra de peso, pragas e deterioração no armazém"
+          />
+        </div>
+
+        {/* Coluna de resultado */}
+        <div>
+          <div
+            style={{ ...st.ticket, borderColor: resultado.armazenar ? "#3E6B4F" : "#A4432E" }}
+          >
+            <div style={st.ticketFuro} aria-hidden="true" />
+            <div style={st.ticketEyebrow}>ROMANEIO DE DECISÃO</div>
+            <div
+              style={{
+                ...st.ticketVeredito,
+                color: resultado.armazenar ? "#3E6B4F" : "#A4432E",
+              }}
+            >
+              {resultado.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
+            </div>
+
+            {/* Orientação em linguagem de produtor — logo abaixo do veredito */}
+            <div style={st.recomendacao}>
+              {fraseAtual ? (
+                <>
+                  <p style={st.recomendacaoTexto}>{frase.texto}</p>
+                  <div style={st.recomendacaoRodape}>
+                    <span style={st.recomendacaoFonte}>
+                      {frase.fonte === "ia" ? "Orientação do GrãoCerto" : "Orientação (sem IA)"}
+                    </span>
+                    <button
+                      type="button"
+                      style={st.recomendacaoBtn}
+                      onClick={onRecomendar}
+                      disabled={gerando}
+                    >
+                      {gerando ? "…" : "Refazer"}
+                    </button>
+                  </div>
+                  {frase.aviso && <span style={st.recomendacaoAviso}>{frase.aviso}</span>}
+                </>
+              ) : (
+                <div style={st.recomendacaoVazia}>
+                  <span style={st.recomendacaoConvite}>
+                    {frase
+                      ? "Os números mudaram desde a última orientação."
+                      : "Quer isso explicado em uma frase?"}
+                  </span>
+                  <button
+                    type="button"
+                    style={st.recomendacaoBtn}
+                    onClick={onRecomendar}
+                    disabled={gerando}
+                  >
+                    {gerando ? "Pensando…" : frase ? "Atualizar orientação" : "Explicar decisão"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {resultado.zonaCinzenta && (
+              <div style={st.ticketAviso}>
+                Diferença menor que R$ 2/saca — zona de empate. Qualquer variação de preço muda a conta.
+              </div>
+            )}
+            <div style={st.ticketDelta}>
+              <span style={st.ticketDeltaNum}>
+                {resultado.vantagemPorSaca >= 0 ? "+" : "−"} R$ {fmtBRL(margem, 2)}
+              </span>
+              <span style={st.ticketDeltaRotulo}>
+                por saca {resultado.armazenar ? "segurando" : "vendendo já"}
+              </span>
+            </div>
+            <div style={st.ticketTotal}>
+              {resultado.vantagemTotal >= 0 ? "+" : "−"} R${" "}
+              {fmtBRL(Math.abs(resultado.vantagemTotal))} no total
+            </div>
+            <div style={st.ticketRodape}>
+              {CULTURAS[lote.cultura].nome} · {fmtBRL(lote.sacas)} sacas · horizonte{" "}
+              {plMeses(lote.meses)}
+            </div>
+          </div>
+
+          {/* Simulador de preço esperado */}
+          <div style={st.painel}>
+            <h2 style={st.tituloSecao}>E se o preço na entressafra for…</h2>
+            <div style={st.sliderLinha}>
+              <span style={st.sliderNum}>R$ {fmtBRL(lote.precoEsperado, 2)}</span>
+              <span style={st.sliderRotulo}>/saca esperado em {plMeses(lote.meses)}</span>
+            </div>
+            <input
+              type="range"
+              min={Math.max(1, lote.precoHoje * 0.8)}
+              max={lote.precoHoje * 1.35}
+              step={0.5}
+              value={lote.precoEsperado}
+              onChange={(e) => onMudar({ precoEsperado: parseFloat(e.target.value) })}
+              style={{ width: "100%" }}
+              aria-label="Preço esperado por saca"
+            />
+            <div style={st.empate}>
+              <span style={st.empateRotulo}>Preço de empate</span>
+              <span style={st.empateNum}>R$ {fmtBRL(resultado.precoEmpate, 2)}/saca</span>
+              <span style={st.empateExpl}>
+                Acima disso, segurar compensa. Abaixo, vender agora ganha.
+              </span>
+            </div>
+          </div>
+
+          {/* Composição da conta — recolhida por padrão para não poluir com vários lotes */}
+          <details style={st.painel}>
+            <summary style={st.contaSummary}>
+              <span style={{ ...st.tituloSecao, margin: 0 }}>A conta, aberta</span>
+              <span style={st.contaSummaryDica}>ver detalhes</span>
+            </summary>
+            <div style={{ marginTop: 12 }}>
+              <Linha rotulo="Vendendo hoje" valor={resultado.receitaAgora} forte />
+              <Linha
+                rotulo={`Vendendo em ${plMeses(lote.meses)} (líquido)`}
+                valor={resultado.receitaFuturaLiquida}
+                forte
+              />
+              <div style={st.divisor} />
+              <Linha rotulo="Custo de armazenagem" valor={-resultado.custoArmazenagem} />
+              <Linha rotulo="Custo do dinheiro parado" valor={-resultado.custoCapital} />
+              <Linha
+                rotulo={`Perda técnica (${(resultado.perdaTotal * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% ≈ ${fmtBRL(resultado.perdaSacas)} sacas)`}
+                valor={-resultado.perdaSacas * lote.precoEsperado}
+              />
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -950,8 +1201,6 @@ const st = {
     letterSpacing: "0.08em",
   },
   grade: {
-    maxWidth: 980,
-    margin: "24px auto 0",
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: 20,
@@ -1075,11 +1324,29 @@ const st = {
     resize: "vertical",
     boxSizing: "border-box",
   },
-  conversaAcoes: {
+  conversaAcoes: { display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" },
+  alvoLinha: {
     display: "flex",
+    alignItems: "center",
     gap: 10,
-    marginTop: 10,
+    marginTop: 12,
     flexWrap: "wrap",
+  },
+  alvoRotulo: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    color: "#5A6B5D",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+  },
+  alvoSelect: {
+    padding: "6px 10px",
+    fontSize: 14,
+    fontFamily: "'Archivo', sans-serif",
+    border: "1px solid #C6CFBF",
+    borderRadius: 8,
+    background: "#FDFDFB",
+    color: "#1E2A22",
   },
   btnGravando: {
     background: "#A4432E",
@@ -1115,12 +1382,7 @@ const st = {
     fontStyle: "italic",
     color: "#3B473D",
   },
-  entendimentoLista: {
-    listStyle: "none",
-    margin: "10px 0",
-    padding: 0,
-    maxWidth: 420,
-  },
+  entendimentoLista: { listStyle: "none", margin: "10px 0", padding: 0, maxWidth: 420 },
   entendimentoItem: {
     display: "flex",
     justifyContent: "space-between",
@@ -1132,6 +1394,147 @@ const st = {
   entendimentoValor: { fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" },
   entendimentoNota: { margin: "8px 0 0", fontSize: 12, color: "#7A6E45" },
   entendimentoAviso: { margin: "6px 0 0", fontSize: 12, color: "#A4432E" },
+
+  // Lotes
+  loteBloco: { maxWidth: 980, margin: "24px auto 0" },
+  loteCabecalho: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottom: "2px solid #1E2A22",
+    flexWrap: "wrap",
+  },
+  loteTitulo: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#1E2A22",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  acoesSafra: {
+    maxWidth: 980,
+    margin: "4px auto 24px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+
+  // Consolidado da safra
+  consolidadoPainel: {
+    maxWidth: 980,
+    margin: "20px auto 0",
+    background: "#FFFDF6",
+    border: "2px solid #C99B2F",
+    borderRadius: 12,
+    padding: "18px 20px 16px",
+  },
+  consolidadoSacas: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#5A6B5D",
+  },
+  consolidadoGrade: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 16,
+  },
+  consolidadoRotulo: {
+    display: "block",
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: "0.1em",
+    color: "#8A7A45",
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  consolidadoVeredito: {
+    display: "block",
+    fontSize: 24,
+    fontWeight: 800,
+    lineHeight: 1.1,
+    fontStretch: "110%",
+  },
+  consolidadoNum: {
+    display: "block",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 20,
+    fontWeight: 600,
+  },
+  consolidadoSub: { display: "block", fontSize: 12, color: "#7A6E45", marginTop: 2 },
+
+  // Recomendação (frase logo abaixo do veredito)
+  recomendacao: {
+    marginTop: 14,
+    padding: "12px 14px",
+    background: "#F4F0E3",
+    borderLeft: "4px solid #C99B2F",
+    borderRadius: "0 8px 8px 0",
+  },
+  recomendacaoTexto: {
+    margin: 0,
+    fontSize: 15,
+    lineHeight: 1.5,
+    color: "#3B473D",
+    fontWeight: 600,
+  },
+  recomendacaoRodape: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+  recomendacaoFonte: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 10,
+    color: "#8A7A45",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+  },
+  recomendacaoVazia: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  recomendacaoConvite: { fontSize: 13, color: "#7A6E45" },
+  recomendacaoBtn: {
+    border: "1px solid #C99B2F",
+    background: "#FFFDF6",
+    color: "#8A7A45",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "5px 12px",
+    borderRadius: 6,
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+  },
+  recomendacaoAviso: {
+    display: "block",
+    marginTop: 6,
+    fontSize: 11,
+    color: "#A4432E",
+  },
+
+  // Histórico
+  historicoPainel: {
+    maxWidth: 980,
+    margin: "0 auto 20px",
+    background: "#FFFFFF",
+    border: "1px solid #D8DED2",
+    borderRadius: 10,
+    padding: "20px 20px 12px",
+  },
   simsCabecalho: {
     display: "flex",
     alignItems: "center",
@@ -1157,11 +1560,7 @@ const st = {
     letterSpacing: "0.06em",
   },
   simDesc: { fontSize: 14, color: "#1E2A22" },
-  simVeredito: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 12,
-    fontWeight: 600,
-  },
+  simVeredito: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, fontWeight: 600 },
   simAcoes: { display: "flex", gap: 6, flexShrink: 0 },
   simBtn: {
     border: "1px solid #C6CFBF",
@@ -1181,12 +1580,14 @@ const st = {
     background: "#F7F8F4",
     color: "#A4432E",
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: 600,
-    padding: "3px 10px",
+    padding: "5px 10px",
     borderRadius: 6,
     cursor: "pointer",
-    lineHeight: 1.4,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
   },
   compScroll: { overflowX: "auto", marginTop: 4, paddingBottom: 4 },
   compTabela: { borderCollapse: "collapse", fontSize: 13, minWidth: "100%" },
@@ -1255,13 +1656,6 @@ const st = {
     fontSize: 12,
     color: "#6E5A17",
   },
-  salvarLinha: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 20,
-    flexWrap: "wrap",
-  },
   btnSalvarSim: {
     border: "none",
     background: "#1E2A22",
@@ -1278,12 +1672,7 @@ const st = {
     fontSize: 12,
     color: "#3E6B4F",
   },
-  formIntro: {
-    margin: "0 0 16px",
-    fontSize: 13,
-    color: "#5A6B5D",
-    lineHeight: 1.5,
-  },
+  formIntro: { margin: "0 0 16px", fontSize: 13, color: "#5A6B5D", lineHeight: 1.5 },
   select: {
     width: "100%",
     padding: "10px 12px",
@@ -1294,13 +1683,7 @@ const st = {
     background: "#FDFDFB",
     color: "#1E2A22",
   },
-  formAcoes: {
-    display: "flex",
-    gap: 10,
-    marginTop: 8,
-    marginBottom: 8,
-    flexWrap: "wrap",
-  },
+  formAcoes: { display: "flex", gap: 10, marginTop: 8, marginBottom: 8, flexWrap: "wrap" },
   btnPrimario: {
     border: "none",
     background: "#1E2A22",
@@ -1323,7 +1706,6 @@ const st = {
     borderRadius: 8,
     cursor: "pointer",
   },
-  colResultado: {},
   ticket: {
     position: "relative",
     background: "#FFFDF6",
@@ -1417,6 +1799,19 @@ const st = {
     margin: "2px 0",
   },
   empateExpl: { display: "block", fontSize: 12, color: "#7A6E45" },
+  contaSummary: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  contaSummaryDica: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    color: "#8A947F",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
   linha: {
     display: "flex",
     justifyContent: "space-between",
@@ -1431,6 +1826,7 @@ const st = {
     fontSize: 12,
     color: "#7A897C",
     lineHeight: 1.5,
-    maxWidth: 560,
+    maxWidth: 980,
+    margin: "0 auto",
   },
 };

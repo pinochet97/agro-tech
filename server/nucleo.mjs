@@ -15,7 +15,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import { extrairParametros, SCHEMA_PARAMETROS } from "../src/services/extrator.js";
+import {
+  extrairParametros,
+  fraseLocalRecomendacao,
+  SCHEMA_PARAMETROS,
+  SCHEMA_RECOMENDACAO,
+} from "../src/services/extrator.js";
 
 // Carrega .env da raiz em dev (sem dependência de dotenv). Na Vercel o
 // arquivo não existe e as variáveis vêm da plataforma — o catch cobre.
@@ -173,8 +178,24 @@ Regras:
 - Converta unidades: "12 mil sacas" = 12000; toneladas ou kg → sacas de 60 kg.
 - Percentual "ao mês" de dívida/banco/juros → jurosMes; de perda/quebra → perdaMes; tarifa R$/saca/mês de armazém/silo → custoArmz.
 - Preço atual → precoHoje; preço esperado/futuro ("vai a", "na entressafra") → precoEsperado. Ambos em R$/saca.
-- Você NÃO faz a simulação, NÃO calcula resultado e NÃO recomenda nada — só extrai. Todo cálculo é do aplicativo.
-- "resumo": uma frase curta em pt-BR, linguagem simples de produtor, dizendo o que você entendeu (para o produtor confirmar antes de simular).`;
+- Você NÃO faz a simulação e NÃO calcula resultado — só extrai. Todo cálculo é do aplicativo.
+- "resumo": uma frase curta em pt-BR, linguagem simples de produtor, dizendo o que você entendeu (para o produtor confirmar antes de simular).
+- "frase_recomendacao": preencha SOMENTE se vier um bloco "LOTE ATUAL" no contexto, seguindo as regras de recomendação abaixo. Sem esse bloco, use null.`;
+
+// Regras da frase de recomendação. O ponto central: o aplicativo já fez
+// TODA a conta e manda os números prontos; o modelo só os veste em
+// linguagem de produtor. Assim nenhum número exibido pode ser alucinado.
+const REGRAS_RECOMENDACAO = `Você escreve UMA orientação curta para um produtor rural brasileiro sobre o que fazer com um lote de grãos.
+
+REGRA CRÍTICA: todos os números já foram calculados pelo aplicativo e vêm prontos no contexto. Use APENAS esses números, exatamente como vieram. NUNCA calcule, estime, arredonde de forma diferente nem invente nenhum valor. Se um número não estiver no contexto, não o cite.
+
+Como escrever:
+- No máximo 2 frases curtas, linguagem simples de produtor, português do Brasil.
+- Comece pela ação: "Venda agora", "Pode segurar", "Venda parte agora e segure o resto".
+- Cite o custo de segurar (custoTotalSegurar) e o preço de empate (precoEmpate) — são os dois números que fazem o produtor entender a conta.
+- Se zonaCinzenta for true, deixe claro que está em cima do muro e sugira dividir o lote (vender uma parte agora, segurar o resto).
+- Valores em reais no padrão brasileiro (R$ 35.000, R$ 141,20). Pode abreviar milhares como "R$ 35 mil".
+- Não use jargão de investimento, não prometa resultado futuro e não diga que é conselho financeiro. Você está explicando uma conta de custo, não recomendando investimento.`;
 
 // Remove nulls e separa o resumo — devolve só os campos preenchidos.
 function limparSaidaIA(saida) {
@@ -185,7 +206,13 @@ function limparSaidaIA(saida) {
   return { campos, resumo: resumo || null };
 }
 
-async function interpretarTextoIA(texto) {
+async function interpretarTextoIA(texto, retratoLote) {
+  // O lote (com o resultado JÁ CALCULADO pelo app) entra como contexto para
+  // a frase de recomendação. Sem ele, o modelo devolve frase_recomendacao null.
+  const contextoLote = retratoLote
+    ? `\n\nLOTE ATUAL (números já calculados pelo aplicativo — use-os como vieram):\n${JSON.stringify(retratoLote, null, 2)}\n\n${REGRAS_RECOMENDACAO}`
+    : "";
+
   const resp = await ia.messages.create(
     {
       model: MODELO_IA,
@@ -201,7 +228,7 @@ async function interpretarTextoIA(texto) {
       messages: [
         {
           role: "user",
-          content: `Hoje é ${new Date().toLocaleDateString("pt-BR")}. Frase do produtor: "${texto}"`,
+          content: `Hoje é ${new Date().toLocaleDateString("pt-BR")}. Frase do produtor: "${texto}"${contextoLote}`,
         },
       ],
     },
@@ -210,6 +237,34 @@ async function interpretarTextoIA(texto) {
   if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
   const bloco = resp.content.find((b) => b.type === "text");
   return limparSaidaIA(JSON.parse(bloco.text));
+}
+
+// Gera só a frase de recomendação para um lote (sem extrair parâmetros).
+async function recomendarIA(retratoLote) {
+  const resp = await ia.messages.create(
+    {
+      model: MODELO_IA,
+      max_tokens: 1024,
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: "low",
+        format: { type: "json_schema", schema: SCHEMA_RECOMENDACAO },
+      },
+      system: REGRAS_RECOMENDACAO,
+      messages: [
+        {
+          role: "user",
+          content: `LOTE ATUAL (números já calculados pelo aplicativo — use-os como vieram):\n${JSON.stringify(retratoLote, null, 2)}`,
+        },
+      ],
+    },
+    { timeout: 60_000 },
+  );
+  if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
+  const bloco = resp.content.find((b) => b.type === "text");
+  const saida = JSON.parse(bloco.text);
+  if (!saida?.frase_recomendacao) throw new Error("resposta sem frase");
+  return saida.frase_recomendacao;
 }
 
 async function interpretarImagemIA(imagemB64, mediaType) {
@@ -247,12 +302,20 @@ async function interpretarImagemIA(imagemB64, mediaType) {
 }
 
 // Interpreta a frase: IA quando configurada, senão regras locais.
-// Nunca lança — degradação sempre devolve algo utilizável.
-export async function interpretarTextoNucleo(texto) {
+// `retratoLote` é opcional; quando vem, a resposta traz também a frase de
+// recomendação para aquele lote. Nunca lança — a degradação sempre devolve
+// algo utilizável.
+export async function interpretarTextoNucleo(texto, retratoLote = null) {
   if (ia) {
     try {
-      const { campos, resumo } = await interpretarTextoIA(texto);
-      return { campos, resumo, fonte: "ia" };
+      const { campos, resumo } = await interpretarTextoIA(texto, retratoLote);
+      const { frase_recomendacao: frase, ...resto } = campos;
+      return {
+        campos: resto,
+        resumo,
+        frase_recomendacao: frase || (retratoLote ? fraseLocalRecomendacao(retratoLote) : null),
+        fonte: "ia",
+      };
     } catch (e) {
       console.warn("[interpretar] IA falhou, usando regras:", e.message || e);
     }
@@ -260,10 +323,30 @@ export async function interpretarTextoNucleo(texto) {
   return {
     campos: extrairParametros(texto),
     resumo: null,
+    frase_recomendacao: retratoLote ? fraseLocalRecomendacao(retratoLote) : null,
     fonte: "regras",
     aviso: ia
       ? "IA indisponível agora — interpretação por regras locais."
       : "Sem ANTHROPIC_API_KEY no servidor — interpretação por regras locais.",
+  };
+}
+
+// Só a frase de recomendação de um lote. Nunca lança: sem IA (ou se ela
+// falhar) devolve a frase montada por template a partir dos mesmos números.
+export async function recomendarLoteNucleo(retratoLote) {
+  if (ia) {
+    try {
+      return { frase_recomendacao: await recomendarIA(retratoLote), fonte: "ia" };
+    } catch (e) {
+      console.warn("[recomendar] IA falhou, usando template:", e.message || e);
+    }
+  }
+  return {
+    frase_recomendacao: fraseLocalRecomendacao(retratoLote),
+    fonte: "regras",
+    aviso: ia
+      ? "IA indisponível agora — frase montada localmente."
+      : "Sem ANTHROPIC_API_KEY no servidor — frase montada localmente.",
   };
 }
 

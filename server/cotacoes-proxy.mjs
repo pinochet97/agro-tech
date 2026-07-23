@@ -17,6 +17,7 @@ import {
   obterCotacoes,
   interpretarTextoNucleo,
   interpretarImagemNucleo,
+  recomendarLoteNucleo,
   temIA,
 } from "./nucleo.mjs";
 
@@ -78,11 +79,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/interpretar") {
     try {
-      const { texto } = await lerCorpo(req);
-      if (!texto || typeof texto !== "string" || !texto.trim()) {
-        return json(400, { erro: "envie { texto } com a frase do produtor" });
+      const { texto, lote } = await lerCorpo(req);
+      const temTexto = typeof texto === "string" && texto.trim();
+      if (!temTexto && !lote) {
+        return json(400, { erro: "envie { texto } e/ou { lote }" });
       }
-      return json(200, await interpretarTextoNucleo(texto.trim()));
+      if (lote && !lote.resultado) {
+        return json(400, { erro: "lote precisa vir com o resultado já calculado" });
+      }
+      if (!temTexto) return json(200, await recomendarLoteNucleo(lote));
+      return json(200, await interpretarTextoNucleo(texto.trim(), lote || null));
     } catch (e) {
       return json(400, { erro: String(e.message || e) });
     }

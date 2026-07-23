@@ -43,7 +43,9 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   ("colhi 12 mil sacas de soja, tô devendo no banco a 1,2 ao mês") e o app extrai os
   parâmetros, mostra um card "foi isso que eu entendi" e **só aplica após confirmação**
   — o veredito nunca muda sem o produtor validar o que foi entendido.
-  - Backend: `POST /api/interpretar` (frase) e `POST /api/interpretar-imagem` (foto de
+  - Backend: `POST /api/interpretar` aceita três formas — `{texto}` (extrai),
+    `{texto, lote}` (extrai + gera a frase) e `{lote}` (só a frase). E
+    `POST /api/interpretar-imagem` (foto de
     romaneio de balança / nota fiscal) no backend leve. Extração via **API do Claude**
     (SDK oficial, `claude-opus-4-8` com structured outputs) quando `ANTHROPIC_API_KEY`
     está no `.env`; **sem chave**, frases caem no extrator local de regras pt-BR
@@ -87,6 +89,30 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   formulário. Se as sacas passam da capacidade, a interface avisa. Sem backend/contas
   ainda — quando existirem, este módulo vira a camada de sincronização.
 - Este projeto nasceu de um protótipo em artifact do Claude.ai.
+
+- **Múltiplos lotes** (`src/services/lotes.js`) — Fase 1 "Fundação Real": a safra é um
+  array de LOTES independentes `{id, cultura, sacas, precoHoje, precoEsperado, meses,
+  custos, precoEditado}`. Cada lote tem cultura, preços, horizonte **e custos próprios**
+  (o produtor pode ter parte em silo próprio e parte em terceiro) e é calculado
+  separadamente — é assim que se simula "vendo 30% agora, seguro 70%". A interface
+  permite adicionar (herda cultura/custos do último), editar e excluir (mínimo 1 lote).
+  Com 2+ lotes aparece o painel "Safra inteira" com a soma; ele **não** tem preço de
+  empate consolidado de propósito (lotes podem ter culturas e preços diferentes).
+  O modelo de cálculo saiu do componente para `calcularLote()` **sem nenhuma alteração
+  de fórmula**.
+- **Frase de recomendação** (`frase_recomendacao`): abaixo do veredito de cada lote, uma
+  orientação em linguagem de produtor ("Venda agora: segurar 10.000 sacas por 6 meses
+  consome R$ 172.227 e a saca só empata a R$ 164,19…").
+  - **O app calcula, a IA só veste.** Todos os números vão prontos para o modelo
+    (`retratoParaIA()`), com instrução explícita de nunca calcular nem inventar valor —
+    assim nenhum número exibido pode ser alucinado. Isso é o que concilia a frase com a
+    convenção "nunca apresentar como recomendação de investimento": ela explica a conta
+    de custo do próprio app, e o aviso legal segue na tela.
+  - Gerada **sob demanda** (botão "Explicar decisão"), não a cada tecla — cada frase é
+    uma chamada de IA. Ao mudar qualquer entrada do lote, a frase é marcada como
+    desatualizada (comparação de assinatura) e o botão vira "Atualizar orientação".
+  - Sem IA/backend: `fraseLocalRecomendacao()` monta a frase por template a partir dos
+    mesmos números (3 variantes: vender, armazenar, zona cinzenta).
 
 ## Modelo de cálculo (núcleo do produto — não alterar sem discutir)
 - Receita hoje = preço_hoje × sacas

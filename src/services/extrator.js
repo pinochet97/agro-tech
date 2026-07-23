@@ -165,7 +165,52 @@ export const SCHEMA_PARAMETROS = {
       "Data impressa num documento (romaneio/nota fiscal) no formato DD/MM/AAAA. SOMENTE para fotos de documento — em frases de texto é sempre null (a data de hoje do contexto NÃO é dataDocumento)",
     ),
     resumo: { type: "string", description: "Uma frase curta em pt-BR resumindo o que foi entendido" },
+    frase_recomendacao: anulavel(
+      { type: "string" },
+      "Orientação curta em linguagem de produtor sobre o que fazer com o lote, usando SOMENTE os números já calculados pelo aplicativo e enviados no contexto. null quando não houver dados de lote no contexto",
+    ),
   },
-  required: ["cultura", "sacas", "precoHoje", "precoEsperado", "meses", "jurosMes", "custoArmz", "perdaMes", "dataDocumento", "resumo"],
+  required: [
+    "cultura", "sacas", "precoHoje", "precoEsperado", "meses",
+    "jurosMes", "custoArmz", "perdaMes", "dataDocumento", "resumo", "frase_recomendacao",
+  ],
   additionalProperties: false,
 };
+
+// Schema enxuto para quando só queremos a frase (sem extrair parâmetros).
+export const SCHEMA_RECOMENDACAO = {
+  type: "object",
+  properties: {
+    frase_recomendacao: {
+      type: "string",
+      description: "Orientação curta em pt-BR sobre o que fazer com o lote, usando SOMENTE os números fornecidos",
+    },
+  },
+  required: ["frase_recomendacao"],
+  additionalProperties: false,
+};
+
+const fmt = (v, dec = 0) =>
+  Number(v).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+// Frase de recomendação SEM IA — montada por template a partir dos números
+// que o app já calculou. É o fallback quando não há chave/backend, para a
+// funcionalidade nunca sumir da tela (mesma filosofia do extrator de regras).
+export function fraseLocalRecomendacao(retrato) {
+  const r = retrato?.resultado;
+  if (!r) return null;
+  const sacas = fmt(retrato.sacas);
+  const meses = `${retrato.meses} ${retrato.meses === 1 ? "mês" : "meses"}`;
+  const custo = fmt(r.custoTotalSegurar);
+  const empate = fmt(r.precoEmpate, 2);
+  const esperado = fmt(retrato.precoEsperado, 2);
+  const porSaca = fmt(Math.abs(r.vantagemPorSaca), 2);
+
+  if (r.zonaCinzenta) {
+    return `Zona de empate: a diferença é de só R$ ${porSaca}/saca. Segurar ${sacas} sacas por ${meses} custa R$ ${custo} e a saca precisa passar de R$ ${empate} — considere vender parte agora e segurar o resto.`;
+  }
+  if (r.veredito === "armazenar") {
+    return `Pode segurar: guardar ${sacas} sacas por ${meses} custa R$ ${custo}, e com a saca a R$ ${esperado} sobra R$ ${porSaca} a mais por saca. Se o preço não passar de R$ ${empate}, a conta vira.`;
+  }
+  return `Venda agora: segurar ${sacas} sacas por ${meses} consome R$ ${custo} e a saca só empata a R$ ${empate}, acima dos R$ ${esperado} que você espera. Segurando, você perde R$ ${porSaca} por saca.`;
+}
