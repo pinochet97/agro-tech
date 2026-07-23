@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "functions": {
+    "api/interpretar.mjs": { "maxDuration": 60 },
+    "api/interpretar-imagem.mjs": { "maxDuration": 60 }
+  }
+}

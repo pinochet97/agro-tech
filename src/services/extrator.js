@@ -162,7 +162,7 @@ export const SCHEMA_PARAMETROS = {
     perdaMes: anulavel({ type: "number" }, "Perda técnica em % ao mês"),
     dataDocumento: anulavel(
       { type: "string" },
-      "Data do documento (romaneio/nota fiscal) no formato DD/MM/AAAA, se visível",
+      "Data impressa num documento (romaneio/nota fiscal) no formato DD/MM/AAAA. SOMENTE para fotos de documento — em frases de texto é sempre null (a data de hoje do contexto NÃO é dataDocumento)",
     ),
     resumo: { type: "string", description: "Uma frase curta em pt-BR resumindo o que foi entendido" },
   },

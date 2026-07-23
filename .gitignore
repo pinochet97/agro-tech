@@ -14,6 +14,10 @@ dist-ssr
 .env.*
 !.env.example
 !.env.development
+!.env.production
+
+# vercel
+.vercel
 
 # editores / SO
 .DS_Store
