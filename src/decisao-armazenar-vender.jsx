@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
 import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
 import { interpretarTexto, interpretarImagem, vozSuportada, criarReconhecimentoVoz } from "./services/conversa";
+import { listarSimulacoes, salvarSimulacaoHistorico, excluirSimulacao, MAX_SIMULACOES } from "./services/simulacoes";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
@@ -25,6 +26,32 @@ const fmtData = (iso) => {
   const [a, m, d] = String(iso).split("-");
   return d && m && a ? `${d}/${m}/${a}` : String(iso);
 };
+
+// ISO → "23/07 17:40" (hora local do produtor)
+const fmtDataHora = (iso) => {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+// Linhas da tabela de comparação de simulações salvas.
+const LINHAS_COMPARACAO = [
+  ["Cultura", (s) => CULTURAS[s.cultura]?.nome || s.cultura],
+  ["Sacas", (s) => fmtBRL(s.sacas)],
+  ["Horizonte", (s) => `${s.meses} ${s.meses === 1 ? "mês" : "meses"}`],
+  ["Preço hoje", (s) => `R$ ${fmtBRL(s.precoHoje, 2)}`],
+  ["Preço esperado", (s) => `R$ ${fmtBRL(s.precoEsperado, 2)}`],
+  ["Veredito", (s) => (s.resultado.veredito === "armazenar" ? "Armazenar" : "Vender")],
+  [
+    "Vantagem/saca",
+    (s) => `${s.resultado.vantagemPorSaca >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.resultado.vantagemPorSaca), 2)}`,
+  ],
+  [
+    "Vantagem total",
+    (s) => `${s.resultado.vantagemTotal >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(s.resultado.vantagemTotal))}`,
+  ],
+  ["Preço de empate", (s) => `R$ ${fmtBRL(s.resultado.precoEmpate, 2)}`],
+];
 
 // Como exibir cada parâmetro extraído no card "foi isso que entendi".
 const ROTULOS_CAMPOS = {
@@ -189,27 +216,51 @@ export default function App() {
   const margem = Math.abs(r.vantagemPorSaca);
   const decisaoFraca = margem < 2; // menos de R$2/saca de diferença = zona cinzenta
 
-  // Cada simulação salva atualiza o perfil: cultura, volume, horizonte e
-  // custos viram o novo pré-preenchimento da próxima visita.
+  // ── Histórico de simulações (localStorage, últimas MAX_SIMULACOES) ──
+  const [simulacoes, setSimulacoes] = useState(() => listarSimulacoes());
+  const [comparando, setComparando] = useState(false);
+
+  // Cada simulação salva atualiza o perfil (pré-preenchimento) E entra
+  // no histórico com ID + timestamp, para revisitar e comparar.
   const salvarSimulacao = () => {
     const novo = atualizarPerfil({
       culturaPrincipal: cultura,
       sacas,
       meses,
       custos: { armazenagem: custoArmz, jurosMes, perdaMes },
-      ultimaSimulacao: {
+    });
+    setPerfil(novo);
+    setSimulacoes(
+      salvarSimulacaoHistorico({
         cultura,
         sacas,
         meses,
         precoHoje,
         precoEsperado,
-        vantagemPorSaca: r.vantagemPorSaca,
-        veredito: r.armazenar ? "armazenar" : "vender",
-      },
-    });
-    setPerfil(novo);
+        custos: { armazenagem: custoArmz, jurosMes, perdaMes },
+        resultado: {
+          veredito: r.armazenar ? "armazenar" : "vender",
+          vantagemPorSaca: r.vantagemPorSaca,
+          vantagemTotal: r.vantagemTotal,
+          precoEmpate: r.precoEmpate,
+        },
+      }),
+    );
     setSimSalva(true);
     setTimeout(() => setSimSalva(false), 2500);
+  };
+
+  // Reabre uma simulação salva: todos os campos voltam como estavam.
+  const abrirSimulacao = (s) => {
+    setCultura(s.cultura);
+    setSacas(s.sacas);
+    setMeses(s.meses);
+    setPrecoHoje(s.precoHoje);
+    setPrecoEditado(true); // preço da simulação salva; a cotação não sobrescreve
+    setPrecoEsperado(s.precoEsperado);
+    setCustoArmz(s.custos.armazenagem);
+    setJurosMes(s.custos.jurosMes);
+    setPerdaMes(s.custos.perdaMes);
   };
 
   // ── Entrada conversacional (texto, voz, foto) ─────────────────
@@ -639,6 +690,91 @@ export default function App() {
             />
           </div>
 
+          {/* Histórico: revisitar e comparar as últimas simulações */}
+          {simulacoes.length > 0 && (
+            <div style={st.painel}>
+              <div style={st.simsCabecalho}>
+                <h2 style={{ ...st.tituloSecao, margin: 0 }}>
+                  Simulações salvas ({simulacoes.length}/{MAX_SIMULACOES})
+                </h2>
+                {simulacoes.length > 1 && (
+                  <button
+                    type="button"
+                    style={st.perfilBarBtn}
+                    onClick={() => setComparando(!comparando)}
+                  >
+                    {comparando ? "Fechar comparação" : "Comparar"}
+                  </button>
+                )}
+              </div>
+
+              {!comparando &&
+                simulacoes.map((s) => (
+                  <div key={s.id} style={st.simLinha}>
+                    <div style={st.simInfo}>
+                      <span style={st.simData}>{fmtDataHora(s.criadaEm)}</span>
+                      <span style={st.simDesc}>
+                        {CULTURAS[s.cultura]?.nome || s.cultura} · {fmtBRL(s.sacas)} sc ·{" "}
+                        {s.meses} {s.meses === 1 ? "mês" : "meses"}
+                      </span>
+                      <span
+                        style={{
+                          ...st.simVeredito,
+                          color: s.resultado.veredito === "armazenar" ? "#3E6B4F" : "#A4432E",
+                        }}
+                      >
+                        {s.resultado.veredito === "armazenar" ? "ARMAZENAR" : "VENDER"} ·{" "}
+                        {s.resultado.vantagemPorSaca >= 0 ? "+" : "−"} R${" "}
+                        {fmtBRL(Math.abs(s.resultado.vantagemPorSaca), 2)}/sc
+                      </span>
+                    </div>
+                    <div style={st.simAcoes}>
+                      <button type="button" style={st.simBtn} onClick={() => abrirSimulacao(s)}>
+                        Abrir
+                      </button>
+                      <button
+                        type="button"
+                        style={st.simBtnExcluir}
+                        onClick={() => setSimulacoes(excluirSimulacao(s.id))}
+                        aria-label="Excluir simulação"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+              {comparando && (
+                <div style={st.compScroll}>
+                  <table style={st.compTabela}>
+                    <thead>
+                      <tr>
+                        <th style={st.compRotulo}></th>
+                        {simulacoes.map((s) => (
+                          <th key={s.id} style={st.compTh}>
+                            {fmtDataHora(s.criadaEm)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {LINHAS_COMPARACAO.map(([rotulo, valorDe]) => (
+                        <tr key={rotulo}>
+                          <td style={st.compRotulo}>{rotulo}</td>
+                          {simulacoes.map((s) => (
+                            <td key={s.id} style={st.compValor}>
+                              {valorDe(s)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           <p style={st.aviso}>
             Protótipo para validação. O preço pode ser informado manualmente ou puxado da
             cotação de referência — a versão de produção usará cotações CEPEA/B3 e clima em
@@ -996,6 +1132,91 @@ const st = {
   entendimentoValor: { fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" },
   entendimentoNota: { margin: "8px 0 0", fontSize: 12, color: "#7A6E45" },
   entendimentoAviso: { margin: "6px 0 0", fontSize: 12, color: "#A4432E" },
+  simsCabecalho: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
+  },
+  simLinha: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "9px 0",
+    borderBottom: "1px dashed #C6CFBF",
+  },
+  simInfo: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
+  simData: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    color: "#8A947F",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  simDesc: { fontSize: 14, color: "#1E2A22" },
+  simVeredito: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    fontWeight: 600,
+  },
+  simAcoes: { display: "flex", gap: 6, flexShrink: 0 },
+  simBtn: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    color: "#3E6B4F",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "5px 12px",
+    borderRadius: 6,
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  simBtnExcluir: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    color: "#A4432E",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 14,
+    fontWeight: 600,
+    padding: "3px 10px",
+    borderRadius: 6,
+    cursor: "pointer",
+    lineHeight: 1.4,
+  },
+  compScroll: { overflowX: "auto", marginTop: 4, paddingBottom: 4 },
+  compTabela: { borderCollapse: "collapse", fontSize: 13, minWidth: "100%" },
+  compTh: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#5A6B5D",
+    textAlign: "right",
+    padding: "6px 10px",
+    borderBottom: "2px solid #1E2A22",
+    whiteSpace: "nowrap",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+  compRotulo: {
+    textAlign: "left",
+    color: "#5A6B5D",
+    padding: "6px 10px 6px 0",
+    whiteSpace: "nowrap",
+    borderBottom: "1px dashed #D8DED2",
+    fontSize: 13,
+  },
+  compValor: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    textAlign: "right",
+    padding: "6px 10px",
+    whiteSpace: "nowrap",
+    borderBottom: "1px dashed #D8DED2",
+  },
   perfilBar: {
     maxWidth: 980,
     margin: "12px auto 0",

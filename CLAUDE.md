@@ -70,6 +70,14 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     documento-norte: o modelo chama/alimenta o serviço de cálculo, não chuta contas).
   - Voz: Web Speech API do navegador (pt-BR, grátis; Chrome/Edge sim, Firefox não —
     o botão só aparece quando suportado). Orquestração: `src/services/conversa.js`.
+- **Histórico de simulações** (`src/services/simulacoes.js`, localStorage
+  `graocerto.simulacoes.v1`): cada "Salvar simulação" guarda um retrato completo
+  (entradas + custos + resultado) com ID e timestamp. Painel "Simulações salvas" na
+  coluna de resultado lista as últimas 5 (a mais antiga sai), com **Abrir** (restaura
+  todos os campos; preço vira "ajustado por você" p/ a cotação não sobrescrever),
+  **Excluir** e **Comparar** (tabela lado a lado com scroll horizontal — mobile-first).
+  Atenção: localStorage é por origem (host:porta) — perfil/histórico de
+  localhost:5173 não aparecem em outra porta do dev server.
 - **Perfil persistente do produtor** (`src/services/perfil.js`, localStorage
   `graocerto.perfil.v1`): na primeira visita um formulário coleta região, cultura
   principal, custos e capacidade de armazenagem; depois tudo nasce pré-preenchido e o
@@ -101,10 +109,10 @@ Visão de longo prazo (não implementar ainda, só para contexto):
    - Considerar respeitar mais o CEPEA: cache compartilhado/mais longo, e um cron diário que
      também atualiza `public/cotacoes.json` (mantém o fallback fresco).
 3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
-4. Persistência simples das simulações do produtor (começar com backend leve ou local).
-   - ✅ Parcial: perfil persistente local (região, cultura, custos, capacidade) com
-     defaults regionais e atualização a cada simulação salva. Falta: histórico de
-     simulações comparáveis e, mais adiante, contas + sincronização via backend.
+4. ~~Persistência simples das simulações do produtor (começar com backend leve ou local).~~
+   ✅ Feito em localStorage: perfil persistente (região, cultura, custos, capacidade,
+   defaults regionais) + histórico das últimas 5 simulações com revisitar/comparar.
+   Fica para depois: contas + sincronização via backend (quando houver login).
 5. Preparar deploy (Vercel) para enviar link nas entrevistas de validação com produtores.
 
 ## Convenções
