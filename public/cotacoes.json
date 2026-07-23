@@ -1,0 +1,19 @@
+{
+  "atualizadoEm": "2026-07-23",
+  "fonte": "CEPEA/ESALQ (referência) · CC BY-NC 4.0",
+  "aviso": "Valores de REFERÊNCIA para o MVP, não a cotação ao vivo. Atualize com o indicador do dia ou configure VITE_COTACOES_ENDPOINT para um backend que consome o CEPEA/ESALQ e a curva B3.",
+  "cotacoes": {
+    "soja": {
+      "preco": 125,
+      "praca": "Soja Paranaguá — CEPEA/ESALQ",
+      "unidade": "R$/saca",
+      "url": "https://www.cepea.org.br/br/indicador/soja.aspx"
+    },
+    "milho": {
+      "preco": 58,
+      "praca": "Milho ESALQ/BM&F — Campinas",
+      "unidade": "R$/saca",
+      "url": "https://www.cepea.org.br/br/indicador/milho.aspx"
+    }
+  }
+}

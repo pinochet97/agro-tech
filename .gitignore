@@ -12,6 +12,7 @@ dist-ssr
 *.local
 .env
 .env.*
+!.env.example
 
 # editores / SO
 .DS_Store

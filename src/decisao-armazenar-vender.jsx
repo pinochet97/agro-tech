@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { buscarCotacoes } from "./services/cotacoes";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
@@ -15,6 +16,13 @@ const CULTURAS = {
 
 const fmtBRL = (v, dec = 0) =>
   v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+// "2026-07-23" → "23/07/2026" (sem depender de fuso horário)
+const fmtData = (iso) => {
+  if (!iso) return "";
+  const [a, m, d] = String(iso).split("-");
+  return d && m && a ? `${d}/${m}/${a}` : String(iso);
+};
 
 function Campo({ rotulo, sufixo, valor, onChange, passo = 1, min = 0, ajuda }) {
   return (
@@ -46,10 +54,63 @@ export default function App() {
   const [jurosMes, setJurosMes] = useState(1.1); // % a.m.
   const [perdaMes, setPerdaMes] = useState(0.25); // % da massa/mês
 
+  // ── Cotação automática (CEPEA/ESALQ) ──────────────────────────
+  // cotacoes: mapa { soja: {...}, milho: {...} } | null
+  // statusCot: "carregando" | "ok" | "erro"
+  // precoEditado: o produtor mexeu no preço → não sobrescrever
+  const [cotacoes, setCotacoes] = useState(null);
+  const [statusCot, setStatusCot] = useState("carregando");
+  const [precoEditado, setPrecoEditado] = useState(false);
+
+  const carregarCotacoes = useCallback(async () => {
+    setStatusCot("carregando");
+    try {
+      const dados = await buscarCotacoes();
+      setCotacoes(dados);
+      setStatusCot("ok");
+      return dados;
+    } catch {
+      setStatusCot("erro"); // fonte indisponível → segue no manual
+      return null;
+    }
+  }, []);
+
+  // Busca uma vez ao abrir a tela.
+  useEffect(() => {
+    carregarCotacoes();
+  }, [carregarCotacoes]);
+
+  // Aplica a cotação ao "preço hoje" da cultura atual, desde que o
+  // produtor ainda não tenha digitado um preço manualmente.
+  useEffect(() => {
+    if (precoEditado || !cotacoes) return;
+    const cot = cotacoes[cultura];
+    if (cot && typeof cot.preco === "number") setPrecoHoje(cot.preco);
+  }, [cotacoes, cultura, precoEditado]);
+
+  const cotacaoAtual = cotacoes?.[cultura] || null;
+
   const trocarCultura = (c) => {
     setCultura(c);
-    setPrecoHoje(CULTURAS[c].precoHoje);
+    const cot = cotacoes?.[c];
+    setPrecoHoje(cot?.preco ?? CULTURAS[c].precoHoje);
     setPrecoEsperado(CULTURAS[c].precoEsperado);
+    setPrecoEditado(false);
+  };
+
+  // Marca o preço como manual quando o produtor digita no campo.
+  const editarPrecoHoje = (v) => {
+    setPrecoHoje(v);
+    setPrecoEditado(true);
+  };
+
+  // Botão "atualizar": rebusca e reaplica a cotação, descartando a edição manual.
+  const reaplicarCotacao = async () => {
+    const dados = await carregarCotacoes();
+    if (dados?.[cultura]) {
+      setPrecoHoje(dados[cultura].preco);
+      setPrecoEditado(false);
+    }
   };
 
   const r = useMemo(() => {
@@ -132,10 +193,43 @@ export default function App() {
             rotulo="Preço hoje na sua região"
             sufixo="R$/saca"
             valor={precoHoje}
-            onChange={setPrecoHoje}
+            onChange={editarPrecoHoje}
             passo={0.5}
             ajuda="Preço balcão que você conseguiria vendendo esta semana"
           />
+
+          <div style={st.cotacao}>
+            {statusCot === "carregando" && (
+              <span style={st.cotacaoInfo}>Buscando cotação…</span>
+            )}
+            {statusCot === "ok" && cotacaoAtual && (
+              <span style={st.cotacaoInfo}>
+                <span style={st.cotacaoPonto} aria-hidden="true" />
+                {cotacaoAtual.praca || "Indicador"}: R$ {fmtBRL(cotacaoAtual.preco, 2)}
+                {cotacaoAtual.data ? ` · ${fmtData(cotacaoAtual.data)}` : ""}
+                {cotacaoAtual.referencia ? " · referência" : ""}
+                {precoEditado ? " · ajustado por você" : ""}
+              </span>
+            )}
+            {statusCot === "ok" && !cotacaoAtual && (
+              <span style={st.cotacaoInfo}>
+                Sem cotação automática para {CULTURAS[cultura].nome} — informe manualmente.
+              </span>
+            )}
+            {statusCot === "erro" && (
+              <span style={st.cotacaoErro}>
+                Cotação automática indisponível — informe o preço manualmente.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={reaplicarCotacao}
+              disabled={statusCot === "carregando"}
+              style={st.cotacaoBtn}
+            >
+              {statusCot === "carregando" ? "…" : "Atualizar"}
+            </button>
+          </div>
           <Campo
             rotulo="Quanto tempo pretende segurar"
             sufixo="meses"
@@ -255,8 +349,9 @@ export default function App() {
           </div>
 
           <p style={st.aviso}>
-            Protótipo para validação. Preços informados manualmente — a versão de produção
-            usará cotações CEPEA/B3 e clima em tempo real. Não é recomendação de investimento.
+            Protótipo para validação. O preço pode ser informado manualmente ou puxado da
+            cotação de referência — a versão de produção usará cotações CEPEA/B3 e clima em
+            tempo real. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0). Não é recomendação de investimento.
           </p>
         </section>
       </main>
@@ -354,7 +449,7 @@ const st = {
   abaAtiva: {
     background: "#1E2A22",
     color: "#F2F4EF",
-    borderColor: "#1E2A22",
+    border: "1px solid #1E2A22",
   },
   campo: { display: "block", marginBottom: 16 },
   campoRotulo: { display: "block", fontSize: 14, fontWeight: 600, marginBottom: 6 },
@@ -377,11 +472,54 @@ const st = {
     whiteSpace: "nowrap",
   },
   campoAjuda: { display: "block", fontSize: 12, color: "#7A897C", marginTop: 4 },
+  cotacao: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    margin: "-8px 0 16px",
+    flexWrap: "wrap",
+  },
+  cotacaoInfo: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#3E6B4F",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  },
+  cotacaoPonto: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "#3E6B4F",
+    flexShrink: 0,
+  },
+  cotacaoErro: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#A4432E",
+  },
+  cotacaoBtn: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    color: "#3E6B4F",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "4px 10px",
+    borderRadius: 6,
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+  },
   colResultado: {},
   ticket: {
     position: "relative",
     background: "#FFFDF6",
-    border: "2px solid",
+    borderWidth: 2,
+    borderStyle: "solid",
     borderRadius: 12,
     padding: "26px 24px 20px",
     marginBottom: 20,
