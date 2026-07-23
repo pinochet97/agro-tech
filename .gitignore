@@ -1,0 +1,25 @@
+# dependências
+node_modules
+
+# build
+dist
+dist-ssr
+
+# cache do Vite
+.vite
+
+# ambiente
+*.local
+.env
+.env.*
+
+# editores / SO
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.log
+npm-debug.log*
+
+# config local do Claude Code
+.claude/settings.local.json
