@@ -102,8 +102,12 @@ export default function App() {
   // null = primeira visita → mostra o formulário de perfil antes da
   // primeira simulação. Depois, tudo nasce pré-preenchido dele.
   const [perfil, setPerfil] = useState(() => carregarPerfil());
-  const [editandoPerfil, setEditandoPerfil] = useState(false);
   const [simSalva, setSimSalva] = useState(false);
+
+  // ── Aba ativa do dashboard (Fase 2) ───────────────────────────
+  // "home" | "operacao" | "inteligencia" | "conta"
+  const [abaAtiva, setAbaAtiva] = useState("home");
+  const [contaSalva, setContaSalva] = useState(false);
 
   // ── Lotes: o estado central da safra ──────────────────────────
   const [lotes, setLotes] = useState(() => [
@@ -216,10 +220,10 @@ export default function App() {
     });
   };
 
-  // Aplica o perfil (recém-salvo ou editado) — reseta para um lote só.
+  // Aplica o perfil do onboarding — cria o primeiro lote e cai na Home.
   const aplicarPerfil = (p) => {
     setPerfil(p);
-    setEditandoPerfil(false);
+    setAbaAtiva("home");
     const cot = cotacoes?.[p.culturaPrincipal];
     setLotes([
       criarLote({
@@ -296,11 +300,40 @@ export default function App() {
     setTimeout(() => setSimSalva(false), 2500);
   };
 
-  // Reabre uma simulação salva: todos os lotes voltam como estavam.
+  // Reabre uma simulação salva: todos os lotes voltam como estavam,
+  // e a tela vai para a Operação (é lá que se mexe nos lotes).
   const abrirSimulacao = (s) => {
     setLotes(s.lotes.map((l) => criarLote({ ...l, precoEditado: true })));
     setFrases({});
+    setAbaAtiva("operacao");
   };
+
+  // Salvar na aba Conta: atualiza o perfil SEM resetar os lotes em edição
+  // (os novos custos valem como sugestão para os próximos lotes).
+  const salvarConta = (dados) => {
+    setPerfil(atualizarPerfil(dados));
+    setContaSalva(true);
+    setTimeout(() => setContaSalva(false), 2500);
+  };
+
+  // ── Alertas da Home, derivados do estado real ─────────────────
+  const alertas = useMemo(() => {
+    const a = [];
+    if (statusCot === "erro") {
+      a.push("Cotação automática indisponível — os preços na tela podem estar defasados.");
+    }
+    if (perfil?.capacidadeSacas > 0 && consolidado.totalSacas > perfil.capacidadeSacas) {
+      a.push(
+        `Sua safra (${fmtBRL(consolidado.totalSacas)} sacas) passa da capacidade de armazenagem (${fmtBRL(perfil.capacidadeSacas)}) — o excedente precisaria de armazém de terceiro.`,
+      );
+    }
+    resultados.forEach((r, i) => {
+      if (r.zonaCinzenta) {
+        a.push(`Lote ${i + 1} está na zona de empate (menos de R$ 2/saca de diferença) — qualquer variação de preço muda a conta.`);
+      }
+    });
+    return a;
+  }, [statusCot, perfil, consolidado, resultados]);
 
   // ── Entrada conversacional (texto, voz, foto) ─────────────────
   // A frase/foto vira parâmetros extraídos; o produtor CONFIRMA o que
@@ -439,30 +472,126 @@ export default function App() {
         <div style={st.marcaSub}>decisão de comercialização · protótipo fase 1</div>
       </header>
 
-      {perfil && !editandoPerfil && (
-        <div style={st.perfilBar}>
-          <span style={st.perfilBarTexto}>
-            {REGIOES[perfil.regiao]?.nome || perfil.regiao}
-            {perfil.capacidadeSacas > 0
-              ? ` · capacidade ${fmtBRL(perfil.capacidadeSacas)} sacas`
-              : ""}
-          </span>
-          <button type="button" style={st.perfilBarBtn} onClick={() => setEditandoPerfil(true)}>
-            Editar perfil
-          </button>
-        </div>
-      )}
-
-      {!perfil || editandoPerfil ? (
+      {!perfil ? (
         <main style={st.gradeUnica}>
-          <FormPerfil
-            inicial={perfil}
-            onSalvar={salvarPerfilDoForm}
-            onCancelar={perfil ? () => setEditandoPerfil(false) : null}
-          />
+          <FormPerfil inicial={null} onSalvar={salvarPerfilDoForm} onCancelar={null} />
         </main>
       ) : (
         <>
+          {/* ══ ABA HOME — visão do dia ══════════════════════════ */}
+          {abaAtiva === "home" && (
+            <main style={st.gradeUnica}>
+              <div style={st.homeStats}>
+                <div style={st.homeCard}>
+                  <span style={st.consolidadoRotulo}>Sacas na simulação</span>
+                  <span style={st.homeNum}>{fmtBRL(consolidado.totalSacas)}</span>
+                  <span style={st.consolidadoSub}>
+                    {lotes.length} {lotes.length === 1 ? "lote" : "lotes"} ·{" "}
+                    {consolidado.culturas.map((c) => CULTURAS[c]?.nome || c).join(" + ")}
+                  </span>
+                </div>
+                <div style={st.homeCard}>
+                  <span style={st.consolidadoRotulo}>Valor hoje</span>
+                  <span style={st.homeNum}>R$ {fmtBRL(consolidado.receitaAgora)}</span>
+                  <span style={st.consolidadoSub}>vendendo tudo ao preço de hoje</span>
+                </div>
+                <div style={st.homeCard}>
+                  <span style={st.consolidadoRotulo}>Cotação do dia</span>
+                  {cotacoes ? (
+                    <>
+                      {["soja", "milho"].map((c) =>
+                        cotacoes[c] ? (
+                          <span key={c} style={st.homeCotLinha}>
+                            {CULTURAS[c].nome}: R$ {fmtBRL(cotacoes[c].preco, 2)}
+                          </span>
+                        ) : null,
+                      )}
+                      <span style={st.consolidadoSub}>
+                        {cotacoes.soja?.referencia || cotacoes.milho?.referencia
+                          ? "referência"
+                          : "CEPEA/ESALQ"}
+                        {" · "}
+                        {fmtData(cotacoes.soja?.data || cotacoes.milho?.data)}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={st.consolidadoSub}>
+                      {statusCot === "erro" ? "indisponível agora" : "carregando…"}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Recomendação principal do dia */}
+              <div
+                style={{
+                  ...st.ticket,
+                  borderColor: consolidado.armazenar ? "#3E6B4F" : "#A4432E",
+                }}
+              >
+                <div style={st.ticketFuro} aria-hidden="true" />
+                <div style={st.ticketEyebrow}>RECOMENDAÇÃO DO DIA · SAFRA INTEIRA</div>
+                <div
+                  style={{
+                    ...st.ticketVeredito,
+                    color: consolidado.armazenar ? "#3E6B4F" : "#A4432E",
+                  }}
+                >
+                  {consolidado.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
+                </div>
+                {consolidado.zonaCinzenta && (
+                  <div style={st.ticketAviso}>
+                    Diferença menor que R$ 2/saca — zona de empate. Vale olhar lote a lote na
+                    Operação.
+                  </div>
+                )}
+                <div style={st.ticketDelta}>
+                  <span style={st.ticketDeltaNum}>
+                    {consolidado.vantagemPorSaca >= 0 ? "+" : "−"} R${" "}
+                    {fmtBRL(Math.abs(consolidado.vantagemPorSaca), 2)}
+                  </span>
+                  <span style={st.ticketDeltaRotulo}>
+                    por saca {consolidado.armazenar ? "segurando" : "vendendo já"}
+                  </span>
+                </div>
+                <div style={st.ticketTotal}>
+                  {consolidado.vantagemTotal >= 0 ? "+" : "−"} R${" "}
+                  {fmtBRL(Math.abs(consolidado.vantagemTotal))} no total · segurar custa R${" "}
+                  {fmtBRL(consolidado.custoTotalSegurar)}
+                </div>
+                <div style={st.ticketRodape}>
+                  <button
+                    type="button"
+                    style={st.recomendacaoBtn}
+                    onClick={() => setAbaAtiva("operacao")}
+                  >
+                    Abrir a operação →
+                  </button>
+                </div>
+              </div>
+
+              {/* Alertas */}
+              <div style={st.painel}>
+                <h2 style={st.tituloSecao}>Alertas</h2>
+                {alertas.length === 0 ? (
+                  <p style={st.semAlerta}>Nenhum alerta por agora.</p>
+                ) : (
+                  alertas.map((a, i) => (
+                    <div key={i} style={st.alertaItem}>
+                      <span style={st.alertaPonto} aria-hidden="true">
+                        !
+                      </span>
+                      <span>{a}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </main>
+          )}
+
+          {/* ══ ABA OPERAÇÃO — lotes e simulação ═════════════════ */}
+          {abaAtiva === "operacao" && (
+          <>
           <section style={st.conversaPainel}>
             <h2 style={st.tituloSecao}>Fale com o GrãoCerto</h2>
             <p style={st.formIntro}>
@@ -658,8 +787,43 @@ export default function App() {
             </button>
             {simSalva && <span style={st.salvoFeedback}>✓ salva — seu perfil foi atualizado</span>}
           </div>
+          </>
+          )}
+
+          {/* ══ ABA INTELIGÊNCIA — histórico e mercado ═══════════ */}
+          {abaAtiva === "inteligencia" && (
+          <>
+          <section style={st.historicoPainel}>
+            <h2 style={st.tituloSecao}>Preço futuro</h2>
+            <div style={st.grafPlaceholder}>
+              <svg viewBox="0 0 320 120" style={{ width: "100%", height: "auto" }} aria-hidden="true">
+                <line x1="0" y1="110" x2="320" y2="110" stroke="#D8DED2" strokeWidth="1" />
+                <polyline
+                  points="0,90 40,84 80,88 120,70 160,74 200,58 240,62 280,48 320,52"
+                  fill="none"
+                  stroke="#C99B2F"
+                  strokeWidth="3"
+                  strokeDasharray="6 5"
+                />
+                <circle cx="0" cy="90" r="4" fill="#3E6B4F" />
+              </svg>
+              <p style={st.grafTexto}>
+                Curva de futuros B3 por vencimento — em breve, para sugerir o preço esperado em
+                vez do seu palpite. Por enquanto, o preço esperado é o controle deslizante de
+                cada lote na Operação.
+              </p>
+            </div>
+          </section>
 
           {/* Histórico: revisitar e comparar as últimas simulações */}
+          {simulacoes.length === 0 && (
+            <section style={st.historicoPainel}>
+              <h2 style={st.tituloSecao}>Simulações salvas</h2>
+              <p style={st.semAlerta}>
+                Nenhuma ainda — salve uma simulação na Operação para revisitar e comparar aqui.
+              </p>
+            </section>
+          )}
           {simulacoes.length > 0 && (
             <section style={st.historicoPainel}>
               <div style={st.simsCabecalho}>
@@ -747,6 +911,20 @@ export default function App() {
               )}
             </section>
           )}
+          </>
+          )}
+
+          {/* ══ ABA CONTA — perfil e custos ══════════════════════ */}
+          {abaAtiva === "conta" && (
+            <main style={st.gradeUnica}>
+              <FormPerfil inicial={perfil} onSalvar={salvarConta} onCancelar={null} />
+              {contaSalva && (
+                <p style={st.contaFeedback}>
+                  ✓ perfil salvo — os novos custos valem como sugestão para os próximos lotes
+                </p>
+              )}
+            </main>
+          )}
 
           <p style={st.aviso}>
             Protótipo para validação. O preço pode ser informado manualmente ou puxado da
@@ -754,9 +932,39 @@ export default function App() {
             tempo real. As orientações explicam a conta de custo do próprio app; não são
             recomendação de investimento. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0).
           </p>
+
+          <TabBar ativa={abaAtiva} onTrocar={setAbaAtiva} />
         </>
       )}
     </div>
+  );
+}
+
+// ── Barra de abas do dashboard (fixa no rodapé, mobile-first) ──
+function TabBar({ ativa, onTrocar }) {
+  const ABAS = [
+    ["home", "🏠", "Home"],
+    ["operacao", "🌾", "Operação"],
+    ["inteligencia", "📈", "Inteligência"],
+    ["conta", "👤", "Conta"],
+  ];
+  return (
+    <nav style={st.tabBar} aria-label="Navegação principal">
+      {ABAS.map(([id, icone, rotulo]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onTrocar(id)}
+          style={{ ...st.tabItem, ...(ativa === id ? st.tabItemAtivo : {}) }}
+          aria-current={ativa === id ? "page" : undefined}
+        >
+          <span style={st.tabIcone} aria-hidden="true">
+            {icone}
+          </span>
+          {rotulo}
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -1174,7 +1382,99 @@ const st = {
     background: "#F2F4EF",
     color: "#1E2A22",
     fontFamily: "'Archivo', system-ui, sans-serif",
-    padding: "0 16px 48px",
+    padding: "0 16px 104px", // folga extra p/ a tab bar fixa no rodapé
+  },
+  tabBar: {
+    position: "fixed",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: "flex",
+    background: "#FFFFFF",
+    borderTop: "2px solid #1E2A22",
+    zIndex: 10,
+    paddingBottom: "env(safe-area-inset-bottom)",
+  },
+  tabItem: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    padding: "8px 4px 10px",
+    border: "none",
+    background: "transparent",
+    color: "#5A6B5D",
+    fontFamily: "'Archivo', sans-serif",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  tabItemAtivo: {
+    color: "#1E2A22",
+    background: "#F4F0E3",
+    boxShadow: "inset 0 3px 0 #C99B2F",
+  },
+  tabIcone: { fontSize: 18, lineHeight: 1 },
+  homeStats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    gap: 12,
+    marginBottom: 20,
+  },
+  homeCard: {
+    background: "#FFFFFF",
+    border: "1px solid #D8DED2",
+    borderRadius: 10,
+    padding: "14px 16px",
+  },
+  homeNum: {
+    display: "block",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 24,
+    fontWeight: 600,
+    margin: "2px 0",
+  },
+  homeCotLinha: {
+    display: "block",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 15,
+    fontWeight: 600,
+    margin: "2px 0",
+  },
+  alertaItem: {
+    display: "flex",
+    gap: 10,
+    padding: "8px 0",
+    fontSize: 14,
+    color: "#3B473D",
+    borderBottom: "1px dashed #E4D296",
+    alignItems: "baseline",
+  },
+  alertaPonto: {
+    color: "#A4432E",
+    fontWeight: 800,
+    fontFamily: "'IBM Plex Mono', monospace",
+    flexShrink: 0,
+  },
+  semAlerta: { fontSize: 14, color: "#7A897C", padding: "2px 0 10px", margin: 0 },
+  grafPlaceholder: {
+    border: "2px dashed #C6CFBF",
+    borderRadius: 10,
+    padding: "18px 16px 8px",
+    textAlign: "center",
+    background: "#FDFDFB",
+    marginBottom: 8,
+  },
+  grafTexto: { fontSize: 13, color: "#7A897C", lineHeight: 1.5, margin: "10px 0 8px" },
+  contaFeedback: {
+    textAlign: "center",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#3E6B4F",
+    marginTop: 12,
   },
   topo: {
     maxWidth: 980,

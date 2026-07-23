@@ -90,6 +90,15 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   ainda — quando existirem, este módulo vira a camada de sincronização.
 - Este projeto nasceu de um protótipo em artifact do Claude.ai.
 
+- **Dashboard de 4 abas** — Fase 2 "Dashboard Real": tab bar fixa no rodapé
+  (mobile-first), estado `abaAtiva` no App. **Home** = sacas totais, valor hoje,
+  cotação do dia, "Recomendação do dia" (veredito consolidado) e alertas derivados do
+  estado real (cotação fora, capacidade excedida, lote em zona de empate). **Operação** =
+  conversa + lotes + salvar. **Inteligência** = placeholder da curva B3 (roteiro item 3)
+  + histórico/comparação; "Abrir" uma simulação leva à Operação. **Conta** = FormPerfil;
+  salvar ali atualiza o perfil **sem resetar os lotes em edição** (decisão deliberada —
+  os custos novos valem como sugestão para os próximos lotes). Onboarding de primeira
+  visita continua em tela cheia, sem abas.
 - **Múltiplos lotes** (`src/services/lotes.js`) — Fase 1 "Fundação Real": a safra é um
   array de LOTES independentes `{id, cultura, sacas, precoHoje, precoEsperado, meses,
   custos, precoEditado}`. Cada lote tem cultura, preços, horizonte **e custos próprios**
