@@ -50,6 +50,13 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     (`src/services/extrator.js`, compartilhado front/servidor — testado com 8 frases
     reais) e foto devolve erro claro. Sem backend nenhum, o front roda o mesmo extrator
     no navegador — a feature nunca fica indisponível, só degrada com aviso.
+  - **Caminho IA validado com chamadas reais** (jul/2026): frases coloquiais extraem
+    certinho, incluindo "300 toneladas" → 5000 sacas e "até dezembro" → meses. Detalhes
+    que custaram debug: (1) o schema de structured outputs NÃO aceita enum com tipo
+    união `["string","null"]` — usar `anyOf` com `{type:"null"}`; (2) a data de hoje
+    vai na mensagem do usuário (não no system, p/ não invalidar cache) — sem ela o
+    modelo não converte "até dezembro" em meses. A chave fica no `.env` (gitignorado);
+    `.env.development` é versionado e NUNCA deve ter segredo.
   - **A IA só extrai parâmetros — nunca calcula nem recomenda** (princípio do
     documento-norte: o modelo chama/alimenta o serviço de cálculo, não chuta contas).
   - Voz: Web Speech API do navegador (pt-BR, grátis; Chrome/Edge sim, Firefox não —

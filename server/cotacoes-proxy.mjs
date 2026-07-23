@@ -205,7 +205,14 @@ async function interpretarTextoIA(texto) {
         format: { type: "json_schema", schema: SCHEMA_PARAMETROS },
       },
       system: SISTEMA_EXTRACAO,
-      messages: [{ role: "user", content: texto }],
+      // A data entra na mensagem (não no system) para "até dezembro" virar
+      // meses sem invalidar o cache do prompt fixo.
+      messages: [
+        {
+          role: "user",
+          content: `Hoje é ${new Date().toLocaleDateString("pt-BR")}. Frase do produtor: "${texto}"`,
+        },
+      ],
     },
     { timeout: 60_000 },
   );

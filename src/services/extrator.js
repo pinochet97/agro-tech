@@ -139,17 +139,27 @@ export function extrairParametros(texto, agora = new Date()) {
 
 // Schema JSON dos parâmetros — usado pelo backend para a extração via IA
 // (structured outputs) e como contrato entre as duas vias.
+// Campos anuláveis usam anyOf — o validador de structured outputs não
+// aceita enum junto com tipo união ["string","null"].
+const anulavel = (schema, description) => ({
+  anyOf: [schema, { type: "null" }],
+  description,
+});
+
 export const SCHEMA_PARAMETROS = {
   type: "object",
   properties: {
-    cultura: { type: ["string", "null"], enum: ["soja", "milho", "trigo", null], description: "Cultura mencionada" },
-    sacas: { type: ["number", "null"], description: "Quantidade em sacas de 60 kg (converta toneladas: 1 t = 16,67 sacas)" },
-    precoHoje: { type: ["number", "null"], description: "Preço atual em R$/saca, se mencionado" },
-    precoEsperado: { type: ["number", "null"], description: "Preço esperado no futuro em R$/saca, se mencionado" },
-    meses: { type: ["integer", "null"], description: "Horizonte de armazenagem em meses" },
-    jurosMes: { type: ["number", "null"], description: "Custo do dinheiro em % ao mês (juros de dívida ou rendimento)" },
-    custoArmz: { type: ["number", "null"], description: "Custo de armazenagem em R$/saca/mês" },
-    perdaMes: { type: ["number", "null"], description: "Perda técnica em % ao mês" },
+    cultura: anulavel(
+      { type: "string", enum: ["soja", "milho", "trigo"] },
+      "Cultura mencionada",
+    ),
+    sacas: anulavel({ type: "number" }, "Quantidade em sacas de 60 kg (toneladas → sacas: kg ÷ 60; ex.: 300 t = 5000 sacas)"),
+    precoHoje: anulavel({ type: "number" }, "Preço atual em R$/saca, se mencionado"),
+    precoEsperado: anulavel({ type: "number" }, "Preço esperado no futuro em R$/saca, se mencionado"),
+    meses: anulavel({ type: "integer" }, "Horizonte de armazenagem em meses"),
+    jurosMes: anulavel({ type: "number" }, "Custo do dinheiro em % ao mês (juros de dívida ou rendimento)"),
+    custoArmz: anulavel({ type: "number" }, "Custo de armazenagem em R$/saca/mês"),
+    perdaMes: anulavel({ type: "number" }, "Perda técnica em % ao mês"),
     resumo: { type: "string", description: "Uma frase curta em pt-BR resumindo o que foi entendido" },
   },
   required: ["cultura", "sacas", "precoHoje", "precoEsperado", "meses", "jurosMes", "custoArmz", "perdaMes", "resumo"],
