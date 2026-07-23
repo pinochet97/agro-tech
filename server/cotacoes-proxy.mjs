@@ -242,7 +242,7 @@ async function interpretarImagemIA(imagemB64, mediaType) {
             },
             {
               type: "text",
-              text: "Extraia os dados deste documento de grãos (romaneio de balança ou nota fiscal): cultura, quantidade (peso líquido em kg → sacas de 60 kg) e, se houver, valor unitário em R$/saca como precoHoje. No resumo, diga que tipo de documento é e o que foi lido.",
+              text: "Extraia os dados deste documento de grãos (romaneio de balança ou nota fiscal): cultura, quantidade (use o PESO LÍQUIDO em kg → sacas de 60 kg), data do documento (dataDocumento, DD/MM/AAAA) e, se houver, valor unitário em R$/saca como precoHoje. No resumo, diga que tipo de documento é e o que foi lido.",
             },
           ],
         },

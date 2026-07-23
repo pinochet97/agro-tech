@@ -57,6 +57,15 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     vai na mensagem do usuário (não no system, p/ não invalidar cache) — sem ela o
     modelo não converte "até dezembro" em meses. A chave fica no `.env` (gitignorado);
     `.env.development` é versionado e NUNCA deve ter segredo.
+  - **Leitura de foto validada com documentos reais de teste** (jul/2026, visão do
+    Claude Opus): romaneio de balança → cultura, peso líquido ÷ 60 = sacas exatas
+    (42.000 kg → 700) e `dataDocumento`; nota fiscal → idem + `precoHoje` do valor
+    unitário (R$ 64,50/saca). Fluxo completo validado pela interface: foto no input →
+    redimensionamento (canvas, 1568 px) → endpoint → card de confirmação → aplicar.
+    `dataDocumento` é informativo (aparece no card, não entra no cálculo). Os testes
+    usaram documentos SINTÉTICOS desenhados em canvas (layout realista de balança/NF);
+    vale re-validar com fotos reais de produtor nas entrevistas (amassado, sombra,
+    caligrafia).
   - **A IA só extrai parâmetros — nunca calcula nem recomenda** (princípio do
     documento-norte: o modelo chama/alimenta o serviço de cálculo, não chuta contas).
   - Voz: Web Speech API do navegador (pt-BR, grátis; Chrome/Edge sim, Firefox não —

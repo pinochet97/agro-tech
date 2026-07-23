@@ -36,6 +36,7 @@ const ROTULOS_CAMPOS = {
   jurosMes: ["Custo do dinheiro", (v) => `${fmtBRL(v, 2)}% a.m.`],
   custoArmz: ["Armazenagem", (v) => `R$ ${fmtBRL(v, 2)}/saca/mês`],
   perdaMes: ["Perda técnica", (v) => `${fmtBRL(v, 2)}% ao mês`],
+  dataDocumento: ["Data do documento", (v) => String(v)],
 };
 
 function Campo({ rotulo, sufixo, valor, onChange, passo = 1, min = 0, ajuda }) {

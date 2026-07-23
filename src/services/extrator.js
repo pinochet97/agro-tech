@@ -160,8 +160,12 @@ export const SCHEMA_PARAMETROS = {
     jurosMes: anulavel({ type: "number" }, "Custo do dinheiro em % ao mês (juros de dívida ou rendimento)"),
     custoArmz: anulavel({ type: "number" }, "Custo de armazenagem em R$/saca/mês"),
     perdaMes: anulavel({ type: "number" }, "Perda técnica em % ao mês"),
+    dataDocumento: anulavel(
+      { type: "string" },
+      "Data do documento (romaneio/nota fiscal) no formato DD/MM/AAAA, se visível",
+    ),
     resumo: { type: "string", description: "Uma frase curta em pt-BR resumindo o que foi entendido" },
   },
-  required: ["cultura", "sacas", "precoHoje", "precoEsperado", "meses", "jurosMes", "custoArmz", "perdaMes", "resumo"],
+  required: ["cultura", "sacas", "precoHoje", "precoEsperado", "meses", "jurosMes", "custoArmz", "perdaMes", "dataDocumento", "resumo"],
   additionalProperties: false,
 };
