@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
+import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
@@ -45,14 +46,22 @@ function Campo({ rotulo, sufixo, valor, onChange, passo = 1, min = 0, ajuda }) {
 }
 
 export default function App() {
-  const [cultura, setCultura] = useState("soja");
-  const [sacas, setSacas] = useState(10000);
-  const [precoHoje, setPrecoHoje] = useState(CULTURAS.soja.precoHoje);
-  const [precoEsperado, setPrecoEsperado] = useState(CULTURAS.soja.precoEsperado);
-  const [meses, setMeses] = useState(6);
-  const [custoArmz, setCustoArmz] = useState(1.2); // R$/saca/mês
-  const [jurosMes, setJurosMes] = useState(1.1); // % a.m.
-  const [perdaMes, setPerdaMes] = useState(0.25); // % da massa/mês
+  // ── Perfil persistente do produtor ────────────────────────────
+  // null = primeira visita → mostra o formulário de perfil antes da
+  // primeira simulação. Depois, tudo nasce pré-preenchido dele.
+  const [perfil, setPerfil] = useState(() => carregarPerfil());
+  const [editandoPerfil, setEditandoPerfil] = useState(false);
+  const [simSalva, setSimSalva] = useState(false);
+
+  const culturaInicial = perfil?.culturaPrincipal || "soja";
+  const [cultura, setCultura] = useState(culturaInicial);
+  const [sacas, setSacas] = useState(perfil?.sacas ?? 10000);
+  const [precoHoje, setPrecoHoje] = useState(CULTURAS[culturaInicial].precoHoje);
+  const [precoEsperado, setPrecoEsperado] = useState(CULTURAS[culturaInicial].precoEsperado);
+  const [meses, setMeses] = useState(perfil?.meses ?? 6);
+  const [custoArmz, setCustoArmz] = useState(perfil?.custos?.armazenagem ?? 1.2); // R$/saca/mês
+  const [jurosMes, setJurosMes] = useState(perfil?.custos?.jurosMes ?? 1.1); // % a.m.
+  const [perdaMes, setPerdaMes] = useState(perfil?.custos?.perdaMes ?? 0.25); // % da massa/mês
 
   // ── Cotação automática (CEPEA/ESALQ) ──────────────────────────
   // cotacoes: mapa { soja: {...}, milho: {...} } | null
@@ -113,6 +122,24 @@ export default function App() {
     }
   };
 
+  // Aplica o perfil (recém-salvo ou editado) aos campos da simulação.
+  const aplicarPerfil = (p) => {
+    setPerfil(p);
+    setEditandoPerfil(false);
+    setCultura(p.culturaPrincipal);
+    const cot = cotacoes?.[p.culturaPrincipal];
+    setPrecoHoje(cot?.preco ?? CULTURAS[p.culturaPrincipal].precoHoje);
+    setPrecoEsperado(CULTURAS[p.culturaPrincipal].precoEsperado);
+    setPrecoEditado(false);
+    setCustoArmz(p.custos.armazenagem);
+    setJurosMes(p.custos.jurosMes);
+    setPerdaMes(p.custos.perdaMes);
+    if (typeof p.sacas === "number") setSacas(p.sacas);
+    if (typeof p.meses === "number") setMeses(p.meses);
+  };
+
+  const salvarPerfilDoForm = (dados) => aplicarPerfil(atualizarPerfil(dados));
+
   const r = useMemo(() => {
     const receitaAgora = precoHoje * sacas;
 
@@ -148,6 +175,29 @@ export default function App() {
   const margem = Math.abs(r.vantagemPorSaca);
   const decisaoFraca = margem < 2; // menos de R$2/saca de diferença = zona cinzenta
 
+  // Cada simulação salva atualiza o perfil: cultura, volume, horizonte e
+  // custos viram o novo pré-preenchimento da próxima visita.
+  const salvarSimulacao = () => {
+    const novo = atualizarPerfil({
+      culturaPrincipal: cultura,
+      sacas,
+      meses,
+      custos: { armazenagem: custoArmz, jurosMes, perdaMes },
+      ultimaSimulacao: {
+        cultura,
+        sacas,
+        meses,
+        precoHoje,
+        precoEsperado,
+        vantagemPorSaca: r.vantagemPorSaca,
+        veredito: r.armazenar ? "armazenar" : "vender",
+      },
+    });
+    setPerfil(novo);
+    setSimSalva(true);
+    setTimeout(() => setSimSalva(false), 2500);
+  };
+
   return (
     <div style={st.pagina}>
       <style>{`
@@ -166,6 +216,29 @@ export default function App() {
         <div style={st.marcaSub}>decisão de comercialização · protótipo fase 1</div>
       </header>
 
+      {perfil && !editandoPerfil && (
+        <div style={st.perfilBar}>
+          <span style={st.perfilBarTexto}>
+            {REGIOES[perfil.regiao]?.nome || perfil.regiao}
+            {perfil.capacidadeSacas > 0
+              ? ` · capacidade ${fmtBRL(perfil.capacidadeSacas)} sacas`
+              : ""}
+          </span>
+          <button type="button" style={st.perfilBarBtn} onClick={() => setEditandoPerfil(true)}>
+            Editar perfil
+          </button>
+        </div>
+      )}
+
+      {!perfil || editandoPerfil ? (
+        <main style={st.gradeUnica}>
+          <FormPerfil
+            inicial={perfil}
+            onSalvar={salvarPerfilDoForm}
+            onCancelar={perfil ? () => setEditandoPerfil(false) : null}
+          />
+        </main>
+      ) : (
       <main style={st.grade}>
         {/* Coluna de entrada */}
         <section style={st.painel}>
@@ -189,6 +262,12 @@ export default function App() {
           </div>
 
           <Campo rotulo="Quantidade" sufixo="sacas" valor={sacas} onChange={setSacas} passo={500} />
+          {perfil?.capacidadeSacas > 0 && sacas > perfil.capacidadeSacas && (
+            <div style={st.capacidadeAviso}>
+              Acima da sua capacidade de armazenagem ({fmtBRL(perfil.capacidadeSacas)} sacas) —
+              o excedente precisaria de armazém de terceiro.
+            </div>
+          )}
           <Campo
             rotulo="Preço hoje na sua região"
             sufixo="R$/saca"
@@ -304,6 +383,13 @@ export default function App() {
             </div>
           </div>
 
+          <div style={st.salvarLinha}>
+            <button type="button" style={st.btnSalvarSim} onClick={salvarSimulacao}>
+              Salvar simulação
+            </button>
+            {simSalva && <span style={st.salvoFeedback}>✓ salva — seu perfil foi atualizado</span>}
+          </div>
+
           {/* Simulador de preço esperado */}
           <div style={st.painel}>
             <h2 style={st.tituloSecao}>E se o preço na entressafra for…</h2>
@@ -355,6 +441,7 @@ export default function App() {
           </p>
         </section>
       </main>
+      )}
     </div>
   );
 }
@@ -373,6 +460,117 @@ function Linha({ rotulo, valor, forte }) {
         {valor < 0 ? "− " : ""}R$ {fmtBRL(Math.abs(valor))}
       </span>
     </div>
+  );
+}
+
+// Formulário do perfil do produtor: primeira visita (onboarding) e edição.
+// Trocar a região sugere os custos regionais de referência — sempre editáveis.
+function FormPerfil({ inicial, onSalvar, onCancelar }) {
+  const [regiao, setRegiao] = useState(inicial?.regiao || "MT");
+  const [culturaPrincipal, setCulturaPrincipal] = useState(inicial?.culturaPrincipal || "soja");
+  const [capacidade, setCapacidade] = useState(inicial?.capacidadeSacas ?? 0);
+  const [custos, setCustos] = useState(
+    inicial?.custos || defaultsDaRegiao(inicial?.regiao || "MT"),
+  );
+
+  const trocarRegiao = (rg) => {
+    setRegiao(rg);
+    setCustos(defaultsDaRegiao(rg)); // sugere os defaults da região; o produtor ajusta
+  };
+
+  const setCusto = (campo) => (v) => setCustos((c) => ({ ...c, [campo]: v }));
+
+  return (
+    <section style={{ ...st.painel, maxWidth: 480, margin: "0 auto" }}>
+      <h2 style={st.tituloSecao}>
+        {inicial ? "Seu perfil" : "Antes da primeira simulação"}
+      </h2>
+      {!inicial && (
+        <p style={st.formIntro}>
+          Conta rapidinho como é sua operação. Nas próximas visitas tudo já vem
+          preenchido — você só ajusta o que mudou.
+        </p>
+      )}
+
+      <label style={st.campo}>
+        <span style={st.campoRotulo}>Sua região</span>
+        <select value={regiao} onChange={(e) => trocarRegiao(e.target.value)} style={st.select}>
+          {Object.entries(REGIOES).map(([k, rg]) => (
+            <option key={k} value={k}>
+              {rg.nome}
+            </option>
+          ))}
+        </select>
+        <span style={st.campoAjuda}>Usada para sugerir custos típicos da sua praça</span>
+      </label>
+
+      <label style={st.campo}>
+        <span style={st.campoRotulo}>Cultura principal</span>
+        <select
+          value={culturaPrincipal}
+          onChange={(e) => setCulturaPrincipal(e.target.value)}
+          style={st.select}
+        >
+          {Object.entries(CULTURAS).map(([k, c]) => (
+            <option key={k} value={k}>
+              {c.nome}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <Campo
+        rotulo="Capacidade de armazenagem"
+        sufixo="sacas"
+        valor={capacidade}
+        onChange={setCapacidade}
+        passo={1000}
+        ajuda="Silo próprio ou espaço contratado. Deixe 0 se não tiver"
+      />
+
+      <h2 style={{ ...st.tituloSecao, marginTop: 24 }}>Seus custos de armazenagem</h2>
+      <p style={st.formIntro}>
+        Sugeridos para {REGIOES[regiao].nome} — ajuste se o seu número for outro.
+      </p>
+      <Campo
+        rotulo="Armazenagem"
+        sufixo="R$/saca/mês"
+        valor={custos.armazenagem}
+        onChange={setCusto("armazenagem")}
+        passo={0.1}
+      />
+      <Campo
+        rotulo="Custo do dinheiro"
+        sufixo="% a.m."
+        valor={custos.jurosMes}
+        onChange={setCusto("jurosMes")}
+        passo={0.1}
+      />
+      <Campo
+        rotulo="Perda técnica estimada"
+        sufixo="% ao mês"
+        valor={custos.perdaMes}
+        onChange={setCusto("perdaMes")}
+        passo={0.05}
+      />
+
+      <div style={st.formAcoes}>
+        <button
+          type="button"
+          style={st.btnPrimario}
+          onClick={() =>
+            onSalvar({ regiao, culturaPrincipal, capacidadeSacas: capacidade, custos })
+          }
+        >
+          {inicial ? "Salvar perfil" : "Salvar e simular"}
+        </button>
+        {onCancelar && (
+          <button type="button" style={st.btnSecundario} onClick={onCancelar}>
+            Cancelar
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -513,6 +711,113 @@ const st = {
     textTransform: "uppercase",
     letterSpacing: "0.06em",
     whiteSpace: "nowrap",
+  },
+  gradeUnica: { maxWidth: 980, margin: "24px auto 0" },
+  perfilBar: {
+    maxWidth: 980,
+    margin: "12px auto 0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  perfilBarTexto: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#5A6B5D",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  perfilBarBtn: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    color: "#3E6B4F",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "4px 10px",
+    borderRadius: 6,
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  capacidadeAviso: {
+    margin: "-8px 0 16px",
+    padding: "8px 12px",
+    background: "#FBF3DC",
+    border: "1px solid #E4D296",
+    borderRadius: 8,
+    fontSize: 12,
+    color: "#6E5A17",
+  },
+  salvarLinha: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+    flexWrap: "wrap",
+  },
+  btnSalvarSim: {
+    border: "none",
+    background: "#1E2A22",
+    color: "#F2F4EF",
+    fontFamily: "'Archivo', sans-serif",
+    fontWeight: 700,
+    fontSize: 14,
+    padding: "10px 18px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  salvoFeedback: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#3E6B4F",
+  },
+  formIntro: {
+    margin: "0 0 16px",
+    fontSize: 13,
+    color: "#5A6B5D",
+    lineHeight: 1.5,
+  },
+  select: {
+    width: "100%",
+    padding: "10px 12px",
+    fontSize: 16,
+    fontFamily: "'Archivo', sans-serif",
+    border: "1px solid #C6CFBF",
+    borderRadius: 8,
+    background: "#FDFDFB",
+    color: "#1E2A22",
+  },
+  formAcoes: {
+    display: "flex",
+    gap: 10,
+    marginTop: 8,
+    marginBottom: 8,
+    flexWrap: "wrap",
+  },
+  btnPrimario: {
+    border: "none",
+    background: "#1E2A22",
+    color: "#F2F4EF",
+    fontFamily: "'Archivo', sans-serif",
+    fontWeight: 700,
+    fontSize: 15,
+    padding: "12px 22px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  btnSecundario: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    color: "#3B473D",
+    fontFamily: "'Archivo', sans-serif",
+    fontWeight: 600,
+    fontSize: 15,
+    padding: "12px 18px",
+    borderRadius: 8,
+    cursor: "pointer",
   },
   colResultado: {},
   ticket: {

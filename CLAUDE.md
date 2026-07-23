@@ -39,7 +39,15 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     é paga (~R$ 10,5 mil); esta rota do widget é gratuita.
   - Dados CEPEA/ESALQ: **CC BY-NC 4.0** (atribuição obrigatória, uso não-comercial) — a
     atribuição está no campo `fonte` e visível na interface.
-- Sem persistência ainda. Este projeto nasceu de um protótipo em artifact do Claude.ai.
+- **Perfil persistente do produtor** (`src/services/perfil.js`, localStorage
+  `graocerto.perfil.v1`): na primeira visita um formulário coleta região, cultura
+  principal, custos e capacidade de armazenagem; depois tudo nasce pré-preenchido e o
+  produtor só ajusta o que mudou. Trocar a região sugere custos regionais de referência
+  (tabela `REGIOES`, sempre editáveis). O botão "Salvar simulação" atualiza o perfil
+  (cultura, sacas, meses, custos + resumo da última simulação); "Editar perfil" reabre o
+  formulário. Se as sacas passam da capacidade, a interface avisa. Sem backend/contas
+  ainda — quando existirem, este módulo vira a camada de sincronização.
+- Este projeto nasceu de um protótipo em artifact do Claude.ai.
 
 ## Modelo de cálculo (núcleo do produto — não alterar sem discutir)
 - Receita hoje = preço_hoje × sacas
@@ -62,6 +70,9 @@ Visão de longo prazo (não implementar ainda, só para contexto):
      também atualiza `public/cotacoes.json` (mantém o fallback fresco).
 3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
 4. Persistência simples das simulações do produtor (começar com backend leve ou local).
+   - ✅ Parcial: perfil persistente local (região, cultura, custos, capacidade) com
+     defaults regionais e atualização a cada simulação salva. Falta: histórico de
+     simulações comparáveis e, mais adiante, contas + sincronização via backend.
 5. Preparar deploy (Vercel) para enviar link nas entrevistas de validação com produtores.
 
 ## Convenções
