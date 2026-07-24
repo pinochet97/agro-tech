@@ -1,0 +1,35 @@
+# Cron de alertas de preço do GrãoCerto (Fase 6).
+# Roda server/cron-alertas.mjs em horário comercial de Brasília (seg–sex),
+# logo depois de o CEPEA publicar os indicadores do dia (fim de tarde) e
+# uma checagem de manhã. Sem os secrets configurados, o job sai rápido
+# com a mensagem "faltam credenciais" — não quebra o repositório.
+#
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (obrigatórios)
+#   WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID  (sem eles: modo simulação)
+name: Alertas de preço
+
+on:
+  schedule:
+    # UTC: 12h e 21h30 = 9h e 18h30 em Brasília (BRT = UTC-3)
+    - cron: "0 12 * * 1-5"
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  alertas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Rodar cron de alertas
+        run: node server/cron-alertas.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}

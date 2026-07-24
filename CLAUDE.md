@@ -116,6 +116,31 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   a nuvem vence; nuvem vazia ← dados locais sobem. **Para ativar:** criar projeto no
   supabase.com → rodar a migração no SQL Editor → configurar as 2 vars no .env local e
   na Vercel → redeploy. O caminho de nuvem NÃO foi testado ainda (sem projeto).
+- **Alertas proativos + WhatsApp** — Fase 6, código pronto AGUARDANDO o projeto Supabase
+  (mesmo padrão da Fase 4):
+  - Painel "Alertas de preço" na aba Inteligência (`PainelAlertas` +
+    `src/services/alertas.js`): cultura, condição (subir até ≥ / cair para ≤),
+    preço-alvo e WhatsApp; grava na tabela `alertas` do Supabase. Sem nuvem/login o
+    painel não some — explica o que falta (validado no navegador).
+  - Migração `supabase/migrations/01_alertas.sql` (NÃO executada): tabela `alertas`
+    (user_id, cultura, praca, preco_alvo, tipo maior_que/menor_que, telefone, status
+    pendente/disparado/cancelado, disparado_em) + `notificacoes` (auditoria de envio;
+    INSERT só pela service role). RLS por usuário nas duas.
+  - Cron `server/cron-alertas.mjs`, agendado por **GitHub Actions**
+    (`.github/workflows/cron-alertas.yml`, 9h e 18h30 BRT seg–sex + disparo manual;
+    Vercel Cron ficou de fora — Hobby só roda 1×/dia): puxa `obterCotacoes()`, lê os
+    alertas `pendente` com a **SUPABASE_SERVICE_ROLE_KEY** (bypassa RLS; só em secret
+    do Actions, nunca no front/git), e para cada alvo cruzado envia WhatsApp (Meta
+    Cloud API — `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID`), registra a notificação
+    e marca `disparado`. Mensagem: "GrãoCerto: A Soja em Paranaguá bateu R$ X hoje…".
+  - Degradações: sem secrets do Supabase → no-op com exit 0 (workflow não fica
+    vermelho); sem chaves do WhatsApp → **modo simulação** (loga a mensagem e registra
+    a notificação como simulada); envio falhou → alerta continua `pendente` e tenta no
+    próximo ciclo. Lógica pura (`avaliarAlerta`/`mensagemAlerta`) exportada e testada
+    (7 casos + formato da mensagem). Chaves mockadas documentadas no `.env.example`.
+  - Risco conhecido: o runner do Actions é IP de datacenter — o CEPEA pode responder
+    403 como na Vercel (aí `obterCotacoes()` cai no snapshot/último sucesso; se nada
+    vier, o cron loga e sai com erro). Verificar no primeiro run real.
 - **Dashboard de 4 abas** — Fase 2 "Dashboard Real": tab bar fixa no rodapé
   (mobile-first), estado `abaAtiva` no App. **Home** = sacas totais, valor hoje,
   cotação do dia, "Recomendação do dia" (veredito consolidado) e alertas derivados do

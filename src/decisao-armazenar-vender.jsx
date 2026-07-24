@@ -18,6 +18,7 @@ import {
 } from "./services/simulacoes";
 import { CULTURAS, criarLote, calcularLote, consolidar, retratoParaIA } from "./services/lotes";
 import { buscarFuturos, precoSugerido } from "./services/futuros";
+import { listarAlertas, criarAlerta, excluirAlerta } from "./services/alertas";
 import {
   ResponsiveContainer,
   LineChart,
@@ -806,6 +807,9 @@ export default function App() {
             )}
           </section>
 
+          {/* Alertas proativos: "me avise quando chegar a R$ X" (Fase 6) */}
+          <PainelAlertas usuario={usuario} cotacoes={cotacoes} perfil={perfil} />
+
           {/* Histórico: revisitar e comparar as últimas simulações */}
           {simulacoes.length === 0 && (
             <section style={st.historicoPainel}>
@@ -1113,6 +1117,172 @@ function GraficoCurva({ titulo, cor, curva, spot }) {
         </LineChart>
       </ResponsiveContainer>
     </div>
+  );
+}
+
+// "Me avise quando chegar a R$ X" (Fase 6): o alerta vai para o Supabase
+// e o cron server/cron-alertas.mjs manda o WhatsApp quando a cotação
+// cruza o alvo — aqui só cria, lista e exclui. Sem nuvem ou sem login,
+// o painel explica o que falta em vez de sumir.
+function PainelAlertas({ usuario, cotacoes, perfil }) {
+  const [alertas, setAlertas] = useState([]);
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [cultura, setCultura] = useState(perfil?.culturaPrincipal || "soja");
+  const [tipo, setTipo] = useState("maior_que");
+  const [alvo, setAlvo] = useState("");
+  const [telefone, setTelefone] = useState("");
+
+  const logado = supabaseConfigurado() && !!usuario;
+
+  useEffect(() => {
+    if (!logado) return;
+    listarAlertas().then((r) => {
+      setAlertas(r.alertas);
+      if (r.erro) setErro(r.erro);
+    });
+  }, [logado, usuario?.id]);
+
+  const precoAtual = cotacoes?.[cultura]?.preco;
+
+  const criar = async () => {
+    const preco = Number(String(alvo).replace(",", "."));
+    if (!preco || preco <= 0 || salvando) return;
+    setSalvando(true);
+    setErro(null);
+    const r = await criarAlerta({
+      cultura,
+      praca: cotacoes?.[cultura]?.praca || null,
+      precoAlvo: preco,
+      tipo,
+      telefone,
+    });
+    if (r.erro) setErro(r.erro);
+    else {
+      setAlvo("");
+      const lista = await listarAlertas();
+      setAlertas(lista.alertas);
+    }
+    setSalvando(false);
+  };
+
+  const excluir = async (id) => {
+    const r = await excluirAlerta(id);
+    if (r.erro) setErro(r.erro);
+    else setAlertas(alertas.filter((a) => a.id !== id));
+  };
+
+  return (
+    <section style={st.historicoPainel}>
+      <h2 style={st.tituloSecao}>Alertas de preço</h2>
+      {!logado ? (
+        <p style={st.semAlerta}>
+          “Me avise no WhatsApp quando a saca chegar ao meu preço” — para isso o alerta
+          precisa ficar guardado na nuvem.{" "}
+          {supabaseConfigurado()
+            ? "Entre na aba Conta para criar seus alertas."
+            : "Disponível quando a conta na nuvem estiver configurada (aba Conta)."}
+        </p>
+      ) : (
+        <>
+          <p style={st.formIntro}>
+            O GrãoCerto acompanha a cotação todos os dias úteis e te avisa no WhatsApp
+            quando ela cruzar o seu alvo.
+          </p>
+          <div style={st.alertaForm}>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>Cultura</span>
+              <select value={cultura} onChange={(e) => setCultura(e.target.value)} style={st.select}>
+                {Object.entries(CULTURAS).map(([k, c]) => (
+                  <option key={k} value={k}>{c.nome}</option>
+                ))}
+              </select>
+            </label>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>Avisar quando</span>
+              <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={st.select}>
+                <option value="maior_que">subir até (≥)</option>
+                <option value="menor_que">cair para (≤)</option>
+              </select>
+            </label>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>
+                Preço-alvo (R$/saca){typeof precoAtual === "number" ? ` — hoje R$ ${fmtBRL(precoAtual, 2)}` : ""}
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={alvo}
+                onChange={(e) => setAlvo(e.target.value)}
+                placeholder={typeof precoAtual === "number" ? fmtBRL(precoAtual + 5, 2) : "ex.: 135,00"}
+                style={st.select}
+              />
+            </label>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>WhatsApp (com DDD)</span>
+              <input
+                type="tel"
+                value={telefone}
+                onChange={(e) => setTelefone(e.target.value)}
+                placeholder="(66) 99999-8888"
+                style={st.select}
+                autoComplete="tel"
+              />
+            </label>
+          </div>
+          <div style={st.formAcoes}>
+            <button
+              type="button"
+              style={st.btnPrimario}
+              onClick={criar}
+              disabled={salvando || !Number(String(alvo).replace(",", "."))}
+            >
+              {salvando ? "Salvando…" : "Me avise quando chegar lá"}
+            </button>
+          </div>
+          {erro && <p style={st.entradaErro}>{erro}</p>}
+
+          {alertas.length === 0 ? (
+            <p style={st.semAlerta}>Nenhum alerta ainda.</p>
+          ) : (
+            alertas.map((a) => (
+              <div key={a.id} style={st.simLinha}>
+                <div style={st.simInfo}>
+                  <span style={st.simDesc}>
+                    {CULTURAS[a.cultura]?.nome || a.cultura} {a.tipo === "maior_que" ? "≥" : "≤"}{" "}
+                    R$ {fmtBRL(Number(a.preco_alvo), 2)}
+                    {a.praca ? ` · ${a.praca}` : ""}
+                  </span>
+                  <span
+                    style={{
+                      ...st.simData,
+                      color: a.status === "disparado" ? "#3E6B4F" : "#5A6B5D",
+                    }}
+                  >
+                    {a.status === "disparado"
+                      ? `✓ disparado ${a.disparado_em ? fmtDataHora(a.disparado_em) : ""}`
+                      : a.status === "pendente"
+                        ? "aguardando o preço"
+                        : a.status}
+                    {a.telefone ? ` · WhatsApp ${a.telefone}` : " · sem telefone"}
+                  </span>
+                </div>
+                <div style={st.simAcoes}>
+                  <button
+                    type="button"
+                    style={st.simBtnExcluir}
+                    onClick={() => excluir(a.id)}
+                    aria-label="Excluir alerta"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -2227,6 +2397,11 @@ const st = {
   },
 
   // Histórico
+  alertaForm: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    columnGap: 12,
+  },
   historicoPainel: {
     maxWidth: 980,
     margin: "0 auto 20px",
