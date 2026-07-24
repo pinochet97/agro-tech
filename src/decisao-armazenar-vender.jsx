@@ -586,9 +586,9 @@ export default function App() {
       {/* Cabeçalho */}
       <header style={st.topo}>
         <div style={st.marca}>
-          GRÃO<span style={{ color: "#C99B2F" }}>CERTO</span>
+          GRÃO<span style={{ color: "#22C55E" }}>CERTO</span>
         </div>
-        <div style={st.marcaSub}>decisão de comercialização · protótipo fase 1</div>
+        <div style={st.marcaSub}>inteligência de comercialização</div>
       </header>
 
       {!perfil ? (
@@ -602,7 +602,7 @@ export default function App() {
             <main style={st.gradeUnica}>
               <div style={st.homeStats}>
                 <div style={st.homeCard}>
-                  <span style={st.consolidadoRotulo}>Sacas na simulação</span>
+                  <span style={st.consolidadoRotulo}>Volume em Armazém</span>
                   <span style={st.homeNum}>{fmtBRL(consolidado.totalSacas)}</span>
                   <span style={st.consolidadoSub}>
                     {lotes.length} {lotes.length === 1 ? "lote" : "lotes"} ·{" "}
@@ -610,12 +610,12 @@ export default function App() {
                   </span>
                 </div>
                 <div style={st.homeCard}>
-                  <span style={st.consolidadoRotulo}>Valor hoje</span>
+                  <span style={st.consolidadoRotulo}>Valor em Armazém</span>
                   <span style={st.homeNum}>R$ {fmtBRL(consolidado.receitaAgora)}</span>
-                  <span style={st.consolidadoSub}>vendendo tudo ao preço de hoje</span>
+                  <span style={st.consolidadoSub}>vendendo tudo ao preço atual</span>
                 </div>
                 <div style={st.homeCard}>
-                  <span style={st.consolidadoRotulo}>Cotação do dia</span>
+                  <span style={st.consolidadoRotulo}>Mercado Hoje (CEPEA)</span>
                   {cotacoes ? (
                     <>
                       {["soja", "milho"].map((c) =>
@@ -645,15 +645,16 @@ export default function App() {
               <div
                 style={{
                   ...st.ticket,
-                  borderColor: consolidado.armazenar ? "#3E6B4F" : "#A4432E",
+                  borderColor: consolidado.armazenar ? "#22C55E" : "#F59E0B",
+                  boxShadow: consolidado.armazenar ? "0 0 32px rgba(34,197,94,0.12)" : "0 0 32px rgba(245,158,11,0.12)",
                 }}
               >
                 <div style={st.ticketFuro} aria-hidden="true" />
-                <div style={st.ticketEyebrow}>RECOMENDAÇÃO DO DIA · SAFRA INTEIRA</div>
+                <div style={st.ticketEyebrow}>RECOMENDAÇÃO DO DIA · SAFRA COMPLETA</div>
                 <div
                   style={{
                     ...st.ticketVeredito,
-                    color: consolidado.armazenar ? "#3E6B4F" : "#A4432E",
+                    color: consolidado.armazenar ? "#22C55E" : "#F59E0B",
                   }}
                 >
                   {consolidado.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
@@ -979,10 +980,7 @@ export default function App() {
           )}
 
           <p style={st.aviso}>
-            Protótipo para validação. O preço pode ser informado manualmente ou puxado da
-            cotação de referência — a versão de produção usará cotações CEPEA/B3 e clima em
-            tempo real. As orientações explicam a conta de custo do próprio app; não são
-            recomendação de investimento. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0).
+            As orientações do GRÃOCERTO explicam a conta de custo do próprio app e não constituem recomendação de investimento. Cotações: CEPEA/ESALQ (CC BY-NC 4.0).
           </p>
 
           {/* ══ CHAT flutuante — disponível em todas as abas ═════ */}
@@ -993,7 +991,7 @@ export default function App() {
               onClick={() => setChatAberto(true)}
               aria-label="Abrir conversa com o GrãoCerto"
             >
-              💬
+              ✨
             </button>
           )}
           {chatAberto && (
@@ -1118,29 +1116,30 @@ function GraficoCurva({ titulo, cor, curva, spot }) {
       </div>
       <ResponsiveContainer width="100%" height={190}>
         <LineChart data={dados} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke="#E4E8DF" strokeDasharray="4 4" vertical={false} />
+          <CartesianGrid stroke="#1E293B" strokeDasharray="4 4" vertical={false} />
           <XAxis
             dataKey="rotulo"
-            tick={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", fill: "#5A6B5D" }}
+            tick={{ fontSize: 11, fontFamily: "'Inter', monospace", fill: "#64748B" }}
             tickLine={false}
-            axisLine={{ stroke: "#C6CFBF" }}
+            axisLine={{ stroke: "#334155" }}
           />
           <YAxis
             domain={["auto", "auto"]}
-            width={46}
-            tick={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", fill: "#5A6B5D" }}
+            width={52}
+            tick={{ fontSize: 11, fontFamily: "'Inter', monospace", fill: "#64748B" }}
             tickLine={false}
             axisLine={false}
             tickFormatter={(v) => fmtBRL(v)}
           />
           <Tooltip
-            formatter={(v) => [`R$ ${fmtBRL(v, 2)}/saca`, "Ajuste"]}
+            formatter={(v) => [`R$ ${fmtBRL(v, 2)}/saca`, "Preço"]}
             contentStyle={{
-              fontFamily: "'IBM Plex Mono', monospace",
+              fontFamily: "'Inter', monospace",
               fontSize: 12,
-              border: "1px solid #C6CFBF",
-              borderRadius: 8,
-              background: "#FFFDF6",
+              border: "1px solid #334155",
+              borderRadius: 10,
+              background: "#1A1D24",
+              color: "#F8FAFC",
             }}
           />
           <Line
@@ -1538,10 +1537,10 @@ function LoginBox() {
 // ── Barra de abas do dashboard (fixa no rodapé, mobile-first) ──
 function TabBar({ ativa, onTrocar }) {
   const ABAS = [
-    ["home", "🏠", "Home"],
-    ["operacao", "🌾", "Operação"],
-    ["inteligencia", "📈", "Inteligência"],
-    ["conta", "👤", "Conta"],
+    ["home", "■", "Painel"],
+    ["operacao", "▶", "Operação"],
+    ["inteligencia", "≈", "Mercado"],
+    ["conta", "○", "Perfil"],
   ];
   return (
     <nav style={st.tabBar} aria-label="Navegação principal">
@@ -1699,12 +1698,12 @@ function CartaoLote({
             </div>
           )}
           <Campo
-            rotulo="Preço hoje na sua região"
+            rotulo="Preço Físico (Balcão Hoje)"
             sufixo="R$/saca"
             valor={lote.precoHoje}
             onChange={(v) => onMudar({ precoHoje: v, precoEditado: true })}
             passo={0.5}
-            ajuda="Preço balcão que você conseguiria vendendo esta semana"
+            ajuda="Preço que você conseguiria vendendo esta semana na sua região"
           />
 
           <div style={st.cotacao}>
@@ -1739,7 +1738,7 @@ function CartaoLote({
           </div>
 
           <Campo
-            rotulo="Quanto tempo pretende segurar"
+            rotulo="Horizonte de Armazenagem"
             sufixo="meses"
             valor={lote.meses}
             onChange={(v) => onMudar({ meses: v })}
@@ -1747,44 +1746,44 @@ function CartaoLote({
             min={1}
           />
 
-          <h2 style={{ ...st.tituloSecao, marginTop: 28 }}>Custos de segurar este lote</h2>
+          <h2 style={{ ...st.tituloSecao, marginTop: 28 }}>Custo de Carregamento</h2>
           <Campo
             rotulo="Armazenagem"
             sufixo="R$/saca/mês"
             valor={lote.custos.armazenagem}
             onChange={(v) => onMudar({ custos: { armazenagem: v } })}
             passo={0.1}
-            ajuda="Silo próprio: energia + manutenção. Terceiro: tarifa cobrada"
+            ajuda="Silo próprio: energia + manutenção. Terceiro: tarifa da cooperativa"
           />
           <Campo
-            rotulo="Custo do dinheiro"
+            rotulo="Custo de Oportunidade (CDI)"
             sufixo="% a.m."
             valor={lote.custos.jurosMes}
             onChange={(v) => onMudar({ custos: { jurosMes: v } })}
             passo={0.1}
-            ajuda="Juros da sua dívida — ou quanto o dinheiro renderia aplicado"
+            ajuda="Juros da sua dívida — ou quanto o capital renderia aplicado"
           />
           <Campo
-            rotulo="Perda técnica estimada"
+            rotulo="Quebra Técnica (Umidade/Impureza)"
             sufixo="% ao mês"
             valor={lote.custos.perdaMes}
             onChange={(v) => onMudar({ custos: { perdaMes: v } })}
             passo={0.05}
-            ajuda="Quebra de peso, pragas e deterioração no armazém"
+            ajuda="Perda de peso por umidade, pragas e deterioração no armazém"
           />
         </div>
 
         {/* Coluna de resultado */}
         <div>
           <div
-            style={{ ...st.ticket, borderColor: resultado.armazenar ? "#3E6B4F" : "#A4432E" }}
+            style={{ ...st.ticket, borderColor: resultado.armazenar ? "#22C55E" : "#F59E0B", boxShadow: resultado.armazenar ? "0 0 24px rgba(34,197,94,0.12)" : "0 0 24px rgba(245,158,11,0.12)" }}
           >
             <div style={st.ticketFuro} aria-hidden="true" />
-            <div style={st.ticketEyebrow}>ROMANEIO DE DECISÃO</div>
+            <div style={st.ticketEyebrow}>RECOMENDAÇÃO ESTRATÉGICA</div>
             <div
               style={{
                 ...st.ticketVeredito,
-                color: resultado.armazenar ? "#3E6B4F" : "#A4432E",
+                color: resultado.armazenar ? "#22C55E" : "#F59E0B",
               }}
             >
               {resultado.armazenar ? "ARMAZENAR" : "VENDER AGORA"}
@@ -1905,10 +1904,10 @@ function CartaoLote({
             </div>
 
             <div style={st.empate}>
-              <span style={st.empateRotulo}>Preço de empate</span>
+              <span style={st.empateRotulo}>Breakeven (Ponto de Empate)</span>
               <span style={st.empateNum}>R$ {fmtBRL(resultado.precoEmpate, 2)}/saca</span>
               <span style={st.empateExpl}>
-                Acima disso, segurar compensa. Abaixo, vender agora ganha.
+                Acima desse preço, armazenar compensa. Abaixo, vender agora é melhor.
               </span>
             </div>
           </div>
@@ -1916,7 +1915,7 @@ function CartaoLote({
           {/* Composição da conta — recolhida por padrão para não poluir com vários lotes */}
           <details style={st.painel}>
             <summary style={st.contaSummary}>
-              <span style={{ ...st.tituloSecao, margin: 0 }}>A conta, aberta</span>
+              <span style={{ ...st.tituloSecao, margin: 0 }}>Demonstrativo de Resultado</span>
               <span style={st.contaSummaryDica}>ver detalhes</span>
             </summary>
             <div style={{ marginTop: 12 }}>
@@ -1949,7 +1948,7 @@ function Linha({ rotulo, valor, forte }) {
         style={{
           ...st.linhaValor,
           fontWeight: forte ? 600 : 400,
-          color: valor < 0 ? "#A4432E" : "#1E2A22",
+          color: valor < 0 ? "#EF4444" : "#22C55E",
         }}
       >
         {valor < 0 ? "− " : ""}R$ {fmtBRL(Math.abs(valor))}
@@ -1978,11 +1977,11 @@ function FormPerfil({ inicial, onSalvar, onCancelar }) {
   return (
     <section style={{ ...st.painel, maxWidth: 480, margin: "0 auto" }}>
       <h2 style={st.tituloSecao}>
-        {inicial ? "Seu perfil" : "Antes da primeira simulação"}
+        {inicial ? "Perfil da Fazenda" : "Configure sua operação"}
       </h2>
       {!inicial && (
         <p style={st.formIntro}>
-          Conta rapidinho como é sua operação. Nas próximas visitas tudo já vem
+          Informe os dados da sua fazenda. Nas próximas visitas tudo já vem
           preenchido — você só ajusta o que mudou.
         </p>
       )}
@@ -2023,9 +2022,9 @@ function FormPerfil({ inicial, onSalvar, onCancelar }) {
         ajuda="Silo próprio ou espaço contratado. Deixe 0 se não tiver"
       />
 
-      <h2 style={{ ...st.tituloSecao, marginTop: 24 }}>Seus custos de armazenagem</h2>
+      <h2 style={{ ...st.tituloSecao, marginTop: 24 }}>Custo de Carregamento Padrão</h2>
       <p style={st.formIntro}>
-        Sugeridos para {REGIOES[regiao].nome} — ajuste se o seu número for outro.
+        Referência para {REGIOES[regiao].nome} — ajuste conforme sua realidade.
       </p>
       <Campo
         rotulo="Armazenagem"
@@ -2035,14 +2034,14 @@ function FormPerfil({ inicial, onSalvar, onCancelar }) {
         passo={0.1}
       />
       <Campo
-        rotulo="Custo do dinheiro"
+        rotulo="Custo de Oportunidade (CDI)"
         sufixo="% a.m."
         valor={custos.jurosMes}
         onChange={setCusto("jurosMes")}
         passo={0.1}
       />
       <Campo
-        rotulo="Perda técnica estimada"
+        rotulo="Quebra Técnica"
         sufixo="% ao mês"
         valor={custos.perdaMes}
         onChange={setCusto("perdaMes")}
@@ -2073,10 +2072,10 @@ function FormPerfil({ inicial, onSalvar, onCancelar }) {
 const st = {
   pagina: {
     minHeight: "100vh",
-    background: "#F2F4EF",
-    color: "#1E2A22",
-    fontFamily: "'Archivo', system-ui, sans-serif",
-    padding: "0 16px 104px", // folga extra p/ a tab bar fixa no rodapé
+    background: "#0F1115",
+    color: "#F8FAFC",
+    fontFamily: "'Inter', 'Outfit', system-ui, sans-serif",
+    padding: "0 16px 104px",
   },
   tabBar: {
     position: "fixed",
@@ -2084,8 +2083,8 @@ const st = {
     right: 0,
     bottom: 0,
     display: "flex",
-    background: "#FFFFFF",
-    borderTop: "2px solid #1E2A22",
+    background: "#1A1D24",
+    borderTop: "1px solid #334155",
     zIndex: 10,
     paddingBottom: "env(safe-area-inset-bottom)",
   },
@@ -2098,18 +2097,18 @@ const st = {
     padding: "8px 4px 10px",
     border: "none",
     background: "transparent",
-    color: "#5A6B5D",
-    fontFamily: "'Archivo', sans-serif",
-    fontSize: 11,
+    color: "#64748B",
+    fontFamily: "'Inter', sans-serif",
+    fontSize: 10,
     fontWeight: 600,
     cursor: "pointer",
     textTransform: "uppercase",
-    letterSpacing: "0.05em",
+    letterSpacing: "0.07em",
   },
   tabItemAtivo: {
-    color: "#1E2A22",
-    background: "#F4F0E3",
-    boxShadow: "inset 0 3px 0 #C99B2F",
+    color: "#22C55E",
+    background: "transparent",
+    boxShadow: "inset 0 3px 0 #22C55E",
   },
   tabIcone: { fontSize: 18, lineHeight: 1 },
   homeStats: {
@@ -2119,61 +2118,67 @@ const st = {
     marginBottom: 20,
   },
   homeCard: {
-    background: "#FFFFFF",
-    border: "1px solid #D8DED2",
-    borderRadius: 10,
-    padding: "14px 16px",
+    background: "#1A1D24",
+    border: "1px solid #334155",
+    borderRadius: 12,
+    padding: "16px 18px",
   },
   homeNum: {
     display: "block",
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 24,
-    fontWeight: 600,
-    margin: "2px 0",
+    fontFamily: "'Inter', monospace",
+    fontSize: 26,
+    fontWeight: 700,
+    margin: "4px 0 2px",
+    color: "#F8FAFC",
+    fontVariantNumeric: "tabular-nums",
   },
   homeCotLinha: {
-    display: "block",
-    fontFamily: "'IBM Plex Mono', monospace",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontFamily: "'Inter', monospace",
     fontSize: 15,
     fontWeight: 600,
-    margin: "2px 0",
+    margin: "4px 0",
+    color: "#F8FAFC",
+    fontVariantNumeric: "tabular-nums",
   },
   alertaItem: {
     display: "flex",
     gap: 10,
-    padding: "8px 0",
+    padding: "10px 0",
     fontSize: 14,
-    color: "#3B473D",
-    borderBottom: "1px dashed #E4D296",
+    color: "#CBD5E1",
+    borderBottom: "1px solid #1E293B",
     alignItems: "baseline",
   },
   alertaPonto: {
-    color: "#A4432E",
+    color: "#F59E0B",
     fontWeight: 800,
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     flexShrink: 0,
   },
-  semAlerta: { fontSize: 14, color: "#7A897C", padding: "2px 0 10px", margin: 0 },
+  semAlerta: { fontSize: 14, color: "#475569", padding: "2px 0 10px", margin: 0 },
   grafPlaceholder: {
-    border: "2px dashed #C6CFBF",
-    borderRadius: 10,
+    border: "1px dashed #334155",
+    borderRadius: 12,
     padding: "18px 16px 8px",
     textAlign: "center",
-    background: "#FDFDFB",
+    background: "#1A1D24",
     marginBottom: 8,
   },
-  grafTexto: { fontSize: 13, color: "#7A897C", lineHeight: 1.5, margin: "10px 0 8px" },
+  grafTexto: { fontSize: 13, color: "#64748B", lineHeight: 1.5, margin: "10px 0 8px" },
   grafBloco: { marginBottom: 18 },
   grafTitulo: {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#3B473D",
+    fontFamily: "'Inter', monospace",
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#94A3B8",
     textTransform: "uppercase",
-    letterSpacing: "0.06em",
+    letterSpacing: "0.08em",
     marginBottom: 6,
   },
   grafCorPonto: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
@@ -2186,34 +2191,34 @@ const st = {
     flexWrap: "wrap",
   },
   futuroInfo: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
-    color: "#3E6B4F",
+    color: "#22C55E",
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
   },
   futuroManual: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
-    color: "#8A947F",
+    color: "#64748B",
   },
   contaFeedback: {
     textAlign: "center",
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#3E6B4F",
+    color: "#22C55E",
     marginTop: 12,
   },
   contaNota: {
     maxWidth: 480,
     margin: "0 auto 16px",
     padding: "10px 14px",
-    background: "#FBF3DC",
-    border: "1px solid #E4D296",
+    background: "rgba(245,158,11,0.1)",
+    border: "1px solid rgba(245,158,11,0.3)",
     borderRadius: 8,
     fontSize: 13,
-    color: "#6E5A17",
+    color: "#FCD34D",
     lineHeight: 1.5,
   },
   contaSessao: {
@@ -2223,37 +2228,37 @@ const st = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    padding: "12px 16px",
-    background: "#FFFFFF",
-    border: "1px solid #D8DED2",
-    borderRadius: 10,
+    padding: "14px 18px",
+    background: "#1A1D24",
+    border: "1px solid #334155",
+    borderRadius: 12,
     flexWrap: "wrap",
   },
-  contaEmail: { fontSize: 13, color: "#3B473D", lineHeight: 1.5, minWidth: 200, flex: 1 },
-  entradaErro: { fontSize: 13, color: "#A4432E", margin: "4px 0 8px" },
+  contaEmail: { fontSize: 13, color: "#CBD5E1", lineHeight: 1.5, minWidth: 200, flex: 1 },
+  entradaErro: { fontSize: 13, color: "#EF4444", margin: "4px 0 8px" },
   topo: {
     maxWidth: 980,
     margin: "0 auto",
-    padding: "28px 0 20px",
-    borderBottom: "2px solid #1E2A22",
+    padding: "24px 0 18px",
+    borderBottom: "1px solid #1E293B",
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "space-between",
     flexWrap: "wrap",
     gap: 8,
   },
   marca: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: 800,
-    letterSpacing: "0.02em",
-    fontStretch: "115%",
+    letterSpacing: "-0.01em",
+    color: "#F8FAFC",
   },
   marcaSub: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 12,
-    color: "#5A6B5D",
+    fontFamily: "'Inter', monospace",
+    fontSize: 11,
+    color: "#475569",
     textTransform: "uppercase",
-    letterSpacing: "0.08em",
+    letterSpacing: "0.1em",
   },
   grade: {
     display: "grid",
@@ -2262,60 +2267,62 @@ const st = {
     alignItems: "start",
   },
   painel: {
-    background: "#FFFFFF",
-    border: "1px solid #D8DED2",
-    borderRadius: 10,
+    background: "#1A1D24",
+    border: "1px solid #334155",
+    borderRadius: 14,
     padding: "20px 20px 12px",
     marginBottom: 20,
   },
   tituloSecao: {
     margin: "0 0 14px",
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 700,
     textTransform: "uppercase",
-    letterSpacing: "0.09em",
-    color: "#5A6B5D",
+    letterSpacing: "0.1em",
+    color: "#64748B",
   },
-  abas: { display: "flex", gap: 8, marginBottom: 18 },
+  abas: { display: "flex", gap: 6, marginBottom: 18 },
   aba: {
     flex: 1,
     padding: "10px 0",
-    border: "1px solid #D8DED2",
+    border: "1px solid #334155",
     borderRadius: 8,
-    background: "#F7F8F4",
-    fontFamily: "'Archivo', sans-serif",
+    background: "#0F1115",
+    fontFamily: "'Inter', sans-serif",
     fontWeight: 600,
-    fontSize: 14,
-    color: "#5A6B5D",
+    fontSize: 13,
+    color: "#64748B",
     cursor: "pointer",
     transition: "all .15s",
   },
   abaAtiva: {
-    background: "#1E2A22",
-    color: "#F2F4EF",
-    border: "1px solid #1E2A22",
+    background: "#22C55E",
+    color: "#0F1115",
+    border: "1px solid #22C55E",
+    fontWeight: 700,
   },
-  campo: { display: "block", marginBottom: 16 },
-  campoRotulo: { display: "block", fontSize: 14, fontWeight: 600, marginBottom: 6 },
+  campo: { display: "block", marginBottom: 18 },
+  campoRotulo: { display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.06em" },
   campoLinha: { display: "flex", alignItems: "center", gap: 8 },
   campoInput: {
     flex: 1,
     minWidth: 0,
-    padding: "10px 12px",
+    padding: "11px 14px",
     fontSize: 17,
-    fontFamily: "'IBM Plex Mono', monospace",
-    border: "1px solid #C6CFBF",
-    borderRadius: 8,
-    background: "#FDFDFB",
-    color: "#1E2A22",
+    fontFamily: "'Inter', monospace",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    background: "#0F1115",
+    color: "#F8FAFC",
+    fontVariantNumeric: "tabular-nums",
   },
   campoSufixo: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#5A6B5D",
+    color: "#64748B",
     whiteSpace: "nowrap",
   },
-  campoAjuda: { display: "block", fontSize: 12, color: "#7A897C", marginTop: 4 },
+  campoAjuda: { display: "block", fontSize: 12, color: "#475569", marginTop: 4, lineHeight: 1.4 },
   cotacao: {
     display: "flex",
     alignItems: "center",
@@ -2325,9 +2332,9 @@ const st = {
     flexWrap: "wrap",
   },
   cotacaoInfo: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#3E6B4F",
+    color: "#22C55E",
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
@@ -2336,19 +2343,20 @@ const st = {
     width: 7,
     height: 7,
     borderRadius: "50%",
-    background: "#3E6B4F",
+    background: "#22C55E",
     flexShrink: 0,
+    boxShadow: "0 0 6px #22C55E",
   },
   cotacaoErro: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#A4432E",
+    color: "#EF4444",
   },
   cotacaoBtn: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
-    color: "#3E6B4F",
-    fontFamily: "'IBM Plex Mono', monospace",
+    border: "1px solid #334155",
+    background: "#1A1D24",
+    color: "#22C55E",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
     padding: "4px 10px",
@@ -2360,25 +2368,25 @@ const st = {
   },
   gradeUnica: { maxWidth: 980, margin: "24px auto 0" },
   alvoRotulo: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
-    color: "#5A6B5D",
+    color: "#64748B",
     textTransform: "uppercase",
     letterSpacing: "0.08em",
   },
   alvoSelect: {
-    padding: "6px 10px",
+    padding: "8px 12px",
     fontSize: 14,
-    fontFamily: "'Archivo', sans-serif",
-    border: "1px solid #C6CFBF",
+    fontFamily: "'Inter', sans-serif",
+    border: "1px solid #334155",
     borderRadius: 8,
-    background: "#FDFDFB",
-    color: "#1E2A22",
+    background: "#0F1115",
+    color: "#F8FAFC",
   },
   btnGravando: {
-    background: "#A4432E",
+    background: "#EF4444",
     color: "#FFFFFF",
-    border: "1px solid #A4432E",
+    border: "1px solid #EF4444",
   },
   // Chat flutuante
   chatFab: {
@@ -2388,12 +2396,12 @@ const st = {
     width: 56,
     height: 56,
     borderRadius: "50%",
-    border: "2px solid #1E2A22",
-    background: "#C99B2F",
-    fontSize: 24,
+    border: "none",
+    background: "linear-gradient(135deg, #22C55E, #16A34A)",
+    fontSize: 22,
     cursor: "pointer",
     zIndex: 11,
-    boxShadow: "0 2px 8px rgba(30,42,34,.25)",
+    boxShadow: "0 4px 16px rgba(34,197,94,.4)",
   },
   chatPainel: {
     position: "fixed",
@@ -2402,28 +2410,29 @@ const st = {
     bottom: 78,
     maxWidth: 420,
     margin: "0 0 0 auto",
-    background: "#FFFFFF",
-    border: "2px solid #1E2A22",
-    borderRadius: 12,
+    background: "#1A1D24",
+    border: "1px solid #334155",
+    borderRadius: 16,
     zIndex: 11,
     display: "flex",
     flexDirection: "column",
-    boxShadow: "0 6px 24px rgba(30,42,34,.25)",
+    boxShadow: "0 8px 32px rgba(0,0,0,.6)",
     overflow: "hidden",
   },
   chatCabecalho: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "10px 14px",
-    background: "#1E2A22",
-    color: "#F2F4EF",
+    padding: "12px 16px",
+    background: "#0F1115",
+    borderBottom: "1px solid #334155",
+    color: "#F8FAFC",
   },
-  chatTitulo: { fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 14 },
+  chatTitulo: { fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 14, color: "#F8FAFC" },
   chatFechar: {
     border: "none",
     background: "transparent",
-    color: "#F2F4EF",
+    color: "#64748B",
     fontSize: 22,
     cursor: "pointer",
     lineHeight: 1,
@@ -2432,9 +2441,9 @@ const st = {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "8px 12px",
-    borderBottom: "1px solid #D8DED2",
-    background: "#F7F8F4",
+    padding: "8px 14px",
+    borderBottom: "1px solid #1E293B",
+    background: "#1A1D24",
   },
   chatMensagens: {
     padding: "12px 12px 4px",
@@ -2445,53 +2454,56 @@ const st = {
     flexDirection: "column",
     gap: 8,
   },
-  chatVazio: { fontSize: 13, color: "#7A897C", lineHeight: 1.5, margin: 0 },
+  chatVazio: { fontSize: 13, color: "#475569", lineHeight: 1.5, margin: 0 },
   bolhaProdutor: {
     alignSelf: "flex-end",
     maxWidth: "85%",
-    background: "#1E2A22",
-    color: "#F2F4EF",
-    padding: "8px 12px",
-    borderRadius: "12px 12px 2px 12px",
+    background: "#22C55E",
+    color: "#0F1115",
+    padding: "9px 13px",
+    borderRadius: "14px 14px 2px 14px",
     fontSize: 14,
     lineHeight: 1.45,
     whiteSpace: "pre-wrap",
+    fontWeight: 500,
   },
   bolhaGraocerto: {
     alignSelf: "flex-start",
     maxWidth: "85%",
-    background: "#F4F0E3",
-    color: "#1E2A22",
-    border: "1px solid #E4D296",
-    padding: "8px 12px",
-    borderRadius: "12px 12px 12px 2px",
+    background: "#0F1115",
+    color: "#CBD5E1",
+    border: "1px solid #334155",
+    padding: "9px 13px",
+    borderRadius: "14px 14px 14px 2px",
     fontSize: 14,
     lineHeight: 1.45,
     whiteSpace: "pre-wrap",
   },
-  bolhaAviso: { display: "block", marginTop: 6, fontSize: 11, color: "#A4432E" },
+  bolhaAviso: { display: "block", marginTop: 6, fontSize: 11, color: "#EF4444" },
   chatEntradaLinha: {
     display: "flex",
     gap: 6,
     padding: "10px 12px",
-    borderTop: "1px solid #D8DED2",
+    borderTop: "1px solid #1E293B",
     alignItems: "flex-end",
+    background: "#0F1115",
   },
   chatEntrada: {
     flex: 1,
     minWidth: 0,
-    padding: "8px 10px",
+    padding: "9px 12px",
     fontSize: 15,
-    fontFamily: "'Archivo', sans-serif",
-    border: "1px solid #C6CFBF",
-    borderRadius: 8,
-    background: "#FDFDFB",
-    color: "#1E2A22",
+    fontFamily: "'Inter', sans-serif",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    background: "#1A1D24",
+    color: "#F8FAFC",
     resize: "none",
   },
   chatBtnIcone: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
+    border: "1px solid #334155",
+    background: "#1A1D24",
+    color: "#94A3B8",
     fontSize: 16,
     padding: "7px 10px",
     borderRadius: 8,
@@ -2499,8 +2511,8 @@ const st = {
   },
   chatEnviar: {
     border: "none",
-    background: "#C99B2F",
-    color: "#1E2A22",
+    background: "#22C55E",
+    color: "#0F1115",
     fontWeight: 700,
     fontSize: 16,
     padding: "7px 14px",
@@ -2516,15 +2528,15 @@ const st = {
     justifyContent: "space-between",
     gap: 10,
     marginBottom: 10,
-    paddingBottom: 8,
-    borderBottom: "2px solid #1E2A22",
+    paddingBottom: 10,
+    borderBottom: "1px solid #334155",
     flexWrap: "wrap",
   },
   loteTitulo: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 13,
-    fontWeight: 600,
-    color: "#1E2A22",
+    fontWeight: 700,
+    color: "#F8FAFC",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
   },
@@ -2541,15 +2553,15 @@ const st = {
   consolidadoPainel: {
     maxWidth: 980,
     margin: "20px auto 0",
-    background: "#FFFDF6",
-    border: "2px solid #C99B2F",
-    borderRadius: 12,
+    background: "rgba(245,158,11,0.08)",
+    border: "1px solid rgba(245,158,11,0.3)",
+    borderRadius: 14,
     padding: "18px 20px 16px",
   },
   consolidadoSacas: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#5A6B5D",
+    color: "#64748B",
   },
   consolidadoGrade: {
     display: "grid",
@@ -2561,7 +2573,7 @@ const st = {
     fontSize: 11,
     textTransform: "uppercase",
     letterSpacing: "0.1em",
-    color: "#8A7A45",
+    color: "#94A3B8",
     fontWeight: 700,
     marginBottom: 4,
   },
@@ -2570,30 +2582,30 @@ const st = {
     fontSize: 24,
     fontWeight: 800,
     lineHeight: 1.1,
-    fontStretch: "110%",
   },
   consolidadoNum: {
     display: "block",
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 20,
     fontWeight: 600,
+    fontVariantNumeric: "tabular-nums",
   },
-  consolidadoSub: { display: "block", fontSize: 12, color: "#7A6E45", marginTop: 2 },
+  consolidadoSub: { display: "block", fontSize: 12, color: "#64748B", marginTop: 2 },
 
   // Recomendação (frase logo abaixo do veredito)
   recomendacao: {
     marginTop: 14,
-    padding: "12px 14px",
-    background: "#F4F0E3",
-    borderLeft: "4px solid #C99B2F",
-    borderRadius: "0 8px 8px 0",
+    padding: "14px 16px",
+    background: "rgba(34,197,94,0.08)",
+    borderLeft: "3px solid #22C55E",
+    borderRadius: "0 10px 10px 0",
   },
   recomendacaoTexto: {
     margin: 0,
     fontSize: 15,
-    lineHeight: 1.5,
-    color: "#3B473D",
-    fontWeight: 600,
+    lineHeight: 1.6,
+    color: "#CBD5E1",
+    fontWeight: 500,
   },
   recomendacaoRodape: {
     display: "flex",
@@ -2604,9 +2616,9 @@ const st = {
     flexWrap: "wrap",
   },
   recomendacaoFonte: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 10,
-    color: "#8A7A45",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: "0.08em",
   },
@@ -2617,12 +2629,12 @@ const st = {
     gap: 10,
     flexWrap: "wrap",
   },
-  recomendacaoConvite: { fontSize: 13, color: "#7A6E45" },
+  recomendacaoConvite: { fontSize: 13, color: "#64748B" },
   recomendacaoBtn: {
-    border: "1px solid #C99B2F",
-    background: "#FFFDF6",
-    color: "#8A7A45",
-    fontFamily: "'IBM Plex Mono', monospace",
+    border: "1px solid #334155",
+    background: "#1A1D24",
+    color: "#22C55E",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
     padding: "5px 12px",
@@ -2636,7 +2648,7 @@ const st = {
     display: "block",
     marginTop: 6,
     fontSize: 11,
-    color: "#A4432E",
+    color: "#EF4444",
   },
 
   // Histórico
@@ -2716,9 +2728,9 @@ const st = {
   historicoPainel: {
     maxWidth: 980,
     margin: "0 auto 20px",
-    background: "#FFFFFF",
-    border: "1px solid #D8DED2",
-    borderRadius: 10,
+    background: "#1A1D24",
+    border: "1px solid #334155",
+    borderRadius: 14,
     padding: "20px 20px 12px",
   },
   simsCabecalho: {
@@ -2734,25 +2746,25 @@ const st = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    padding: "9px 0",
-    borderBottom: "1px dashed #C6CFBF",
+    padding: "10px 0",
+    borderBottom: "1px solid #1E293B",
   },
   simInfo: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
   simData: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
-    color: "#8A947F",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
   },
-  simDesc: { fontSize: 14, color: "#1E2A22" },
-  simVeredito: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, fontWeight: 600 },
+  simDesc: { fontSize: 14, color: "#CBD5E1" },
+  simVeredito: { fontFamily: "'Inter', monospace", fontSize: 12, fontWeight: 600 },
   simAcoes: { display: "flex", gap: 6, flexShrink: 0 },
   simBtn: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
-    color: "#3E6B4F",
-    fontFamily: "'IBM Plex Mono', monospace",
+    border: "1px solid #334155",
+    background: "#0F1115",
+    color: "#22C55E",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
     padding: "5px 12px",
@@ -2762,10 +2774,10 @@ const st = {
     letterSpacing: "0.06em",
   },
   simBtnExcluir: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
-    color: "#A4432E",
-    fontFamily: "'IBM Plex Mono', monospace",
+    border: "1px solid #334155",
+    background: "#0F1115",
+    color: "#EF4444",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
     padding: "5px 10px",
@@ -2778,31 +2790,33 @@ const st = {
   compScroll: { overflowX: "auto", marginTop: 4, paddingBottom: 4 },
   compTabela: { borderCollapse: "collapse", fontSize: 13, minWidth: "100%" },
   compTh: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
-    color: "#5A6B5D",
+    color: "#64748B",
     textAlign: "right",
     padding: "6px 10px",
-    borderBottom: "2px solid #1E2A22",
+    borderBottom: "1px solid #334155",
     whiteSpace: "nowrap",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
   },
   compRotulo: {
     textAlign: "left",
-    color: "#5A6B5D",
+    color: "#64748B",
     padding: "6px 10px 6px 0",
     whiteSpace: "nowrap",
-    borderBottom: "1px dashed #D8DED2",
+    borderBottom: "1px solid #1E293B",
     fontSize: 13,
   },
   compValor: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     textAlign: "right",
     padding: "6px 10px",
     whiteSpace: "nowrap",
-    borderBottom: "1px dashed #D8DED2",
+    borderBottom: "1px solid #1E293B",
+    color: "#CBD5E1",
+    fontVariantNumeric: "tabular-nums",
   },
   perfilBar: {
     maxWidth: 980,
@@ -2814,17 +2828,17 @@ const st = {
     flexWrap: "wrap",
   },
   perfilBarTexto: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#5A6B5D",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
   },
   perfilBarBtn: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
-    color: "#3E6B4F",
-    fontFamily: "'IBM Plex Mono', monospace",
+    border: "1px solid #334155",
+    background: "#1A1D24",
+    color: "#22C55E",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     fontWeight: 600,
     padding: "4px 10px",
@@ -2836,71 +2850,73 @@ const st = {
   capacidadeAviso: {
     margin: "-8px 0 16px",
     padding: "8px 12px",
-    background: "#FBF3DC",
-    border: "1px solid #E4D296",
+    background: "rgba(245,158,11,0.1)",
+    border: "1px solid rgba(245,158,11,0.3)",
     borderRadius: 8,
     fontSize: 12,
-    color: "#6E5A17",
+    color: "#FCD34D",
   },
   btnSalvarSim: {
     border: "none",
-    background: "#1E2A22",
-    color: "#F2F4EF",
-    fontFamily: "'Archivo', sans-serif",
+    background: "#22C55E",
+    color: "#0F1115",
+    fontFamily: "'Inter', sans-serif",
     fontWeight: 700,
     fontSize: 14,
-    padding: "10px 18px",
-    borderRadius: 8,
+    padding: "11px 20px",
+    borderRadius: 10,
     cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(34,197,94,.3)",
   },
   salvoFeedback: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#3E6B4F",
+    color: "#22C55E",
   },
-  formIntro: { margin: "0 0 16px", fontSize: 13, color: "#5A6B5D", lineHeight: 1.5 },
+  formIntro: { margin: "0 0 16px", fontSize: 13, color: "#64748B", lineHeight: 1.5 },
   select: {
     width: "100%",
-    padding: "10px 12px",
+    padding: "11px 14px",
     fontSize: 16,
-    fontFamily: "'Archivo', sans-serif",
-    border: "1px solid #C6CFBF",
-    borderRadius: 8,
-    background: "#FDFDFB",
-    color: "#1E2A22",
+    fontFamily: "'Inter', sans-serif",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    background: "#0F1115",
+    color: "#F8FAFC",
   },
   formAcoes: { display: "flex", gap: 10, marginTop: 8, marginBottom: 8, flexWrap: "wrap" },
   btnPrimario: {
     border: "none",
-    background: "#1E2A22",
-    color: "#F2F4EF",
-    fontFamily: "'Archivo', sans-serif",
+    background: "#22C55E",
+    color: "#0F1115",
+    fontFamily: "'Inter', sans-serif",
     fontWeight: 700,
     fontSize: 15,
-    padding: "12px 22px",
-    borderRadius: 8,
+    padding: "12px 24px",
+    borderRadius: 10,
     cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(34,197,94,.3)",
   },
   btnSecundario: {
-    border: "1px solid #C6CFBF",
-    background: "#F7F8F4",
-    color: "#3B473D",
-    fontFamily: "'Archivo', sans-serif",
+    border: "1px solid #334155",
+    background: "#1A1D24",
+    color: "#CBD5E1",
+    fontFamily: "'Inter', sans-serif",
     fontWeight: 600,
     fontSize: 15,
-    padding: "12px 18px",
-    borderRadius: 8,
+    padding: "12px 20px",
+    borderRadius: 10,
     cursor: "pointer",
   },
   ticket: {
     position: "relative",
-    background: "#FFFDF6",
-    borderWidth: 2,
+    background: "#1A1D24",
+    borderWidth: 1,
     borderStyle: "solid",
-    borderRadius: 12,
+    borderRadius: 16,
     padding: "26px 24px 20px",
     marginBottom: 20,
-    boxShadow: "0 2px 0 rgba(30,42,34,.12)",
+    boxShadow: "0 4px 24px rgba(0,0,0,.4)",
   },
   ticketFuro: {
     position: "absolute",
@@ -2909,82 +2925,86 @@ const st = {
     width: 14,
     height: 14,
     borderRadius: "50%",
-    background: "#F2F4EF",
-    border: "2px solid #D8DED2",
+    background: "#0F1115",
+    border: "2px solid #334155",
   },
   ticketEyebrow: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
     letterSpacing: "0.14em",
-    color: "#8A947F",
+    color: "#475569",
     marginBottom: 8,
+    textTransform: "uppercase",
   },
   ticketVeredito: {
     fontSize: "clamp(34px, 7vw, 52px)",
     fontWeight: 800,
     lineHeight: 1,
-    letterSpacing: "-0.01em",
-    fontStretch: "110%",
+    letterSpacing: "-0.02em",
   },
   ticketAviso: {
     marginTop: 10,
     padding: "8px 12px",
-    background: "#FBF3DC",
-    border: "1px solid #E4D296",
+    background: "rgba(245,158,11,0.1)",
+    border: "1px solid rgba(245,158,11,0.3)",
     borderRadius: 8,
     fontSize: 13,
-    color: "#6E5A17",
+    color: "#FCD34D",
   },
   ticketDelta: { marginTop: 18, display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" },
   ticketDeltaNum: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 30,
-    fontWeight: 600,
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
   },
-  ticketDeltaRotulo: { fontSize: 14, color: "#5A6B5D" },
+  ticketDeltaRotulo: { fontSize: 14, color: "#94A3B8" },
   ticketTotal: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 15,
     marginTop: 4,
-    color: "#3B473D",
+    color: "#CBD5E1",
+    fontVariantNumeric: "tabular-nums",
   },
   ticketRodape: {
     marginTop: 16,
     paddingTop: 12,
-    borderTop: "1px dashed #C6CFBF",
-    fontFamily: "'IBM Plex Mono', monospace",
+    borderTop: "1px solid #1E293B",
+    fontFamily: "'Inter', monospace",
     fontSize: 12,
-    color: "#8A947F",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
   },
   sliderLinha: { display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" },
-  sliderNum: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 600 },
-  sliderRotulo: { fontSize: 13, color: "#5A6B5D" },
+  sliderNum: { fontFamily: "'Inter', monospace", fontSize: 26, fontWeight: 700, color: "#F59E0B", fontVariantNumeric: "tabular-nums" },
+  sliderRotulo: { fontSize: 13, color: "#64748B" },
   empate: {
     marginTop: 16,
     marginBottom: 8,
-    padding: "12px 14px",
-    background: "#F4F0E3",
-    borderLeft: "4px solid #C99B2F",
-    borderRadius: "0 8px 8px 0",
+    padding: "14px 16px",
+    background: "rgba(245,158,11,0.08)",
+    borderLeft: "3px solid #F59E0B",
+    borderRadius: "0 10px 10px 0",
   },
   empateRotulo: {
     display: "block",
     fontSize: 11,
     textTransform: "uppercase",
     letterSpacing: "0.1em",
-    color: "#8A7A45",
+    color: "#94A3B8",
     fontWeight: 700,
   },
   empateNum: {
     display: "block",
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 22,
-    fontWeight: 600,
+    fontWeight: 700,
     margin: "2px 0",
+    color: "#F59E0B",
+    fontVariantNumeric: "tabular-nums",
   },
-  empateExpl: { display: "block", fontSize: 12, color: "#7A6E45" },
+  empateExpl: { display: "block", fontSize: 12, color: "#64748B" },
   contaSummary: {
     display: "flex",
     alignItems: "center",
@@ -2992,9 +3012,9 @@ const st = {
     gap: 10,
   },
   contaSummaryDica: {
-    fontFamily: "'IBM Plex Mono', monospace",
+    fontFamily: "'Inter', monospace",
     fontSize: 11,
-    color: "#8A947F",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
   },
@@ -3002,15 +3022,16 @@ const st = {
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
-    padding: "7px 0",
+    padding: "8px 0",
     fontSize: 14,
+    borderBottom: "1px solid #0F1115",
   },
-  linhaRotulo: { color: "#3B473D" },
-  linhaValor: { fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" },
-  divisor: { borderTop: "1px dashed #C6CFBF", margin: "8px 0" },
+  linhaRotulo: { color: "#94A3B8" },
+  linhaValor: { fontFamily: "'Inter', monospace", whiteSpace: "nowrap", color: "#F8FAFC", fontVariantNumeric: "tabular-nums" },
+  divisor: { borderTop: "1px solid #1E293B", margin: "8px 0" },
   aviso: {
     fontSize: 12,
-    color: "#7A897C",
+    color: "#334155",
     lineHeight: 1.5,
     maxWidth: 980,
     margin: "0 auto",
