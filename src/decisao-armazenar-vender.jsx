@@ -20,6 +20,17 @@ import { CULTURAS, criarLote, calcularLote, consolidar, retratoParaIA } from "./
 import { buscarFuturos, precoSugerido } from "./services/futuros";
 import { listarAlertas, criarAlerta, excluirAlerta } from "./services/alertas";
 import {
+  listarFechamentos,
+  registrarFechamento,
+  excluirFechamento,
+  sincronizarFechamentos,
+  montarFechamento,
+  calcularResultadoReal,
+  fraseResultado,
+  resumoDesempenho,
+} from "./services/fechamentos.js";
+import { desenharCard, baixarCard, compartilharCard } from "./services/cardResultado";
+import {
   ResponsiveContainer,
   LineChart,
   Line,
@@ -136,6 +147,7 @@ export default function App() {
       const p = await sincronizarPerfil();
       if (p) setPerfil(p);
       setSimulacoes(await sincronizarSimulacoes());
+      setFechamentos(await sincronizarFechamentos());
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario?.id]);
@@ -324,6 +336,19 @@ export default function App() {
   // ── Histórico de simulações (localStorage) ────────────────────
   const [simulacoes, setSimulacoes] = useState(() => listarSimulacoes());
   const [comparando, setComparando] = useState(false);
+
+  // ── Resultado real (Fase 7): lotes fechados de verdade ────────
+  const [fechamentos, setFechamentos] = useState(() => listarFechamentos());
+  const [cardAberto, setCardAberto] = useState(null); // fechamento em exibição no card
+
+  // "Vendi este lote": compara com a simulação salva mais recente da
+  // mesma cultura (a "simulação original"); o registro aparece em
+  // Inteligência → Seu Desempenho, com o card compartilhável.
+  const registrarVenda = (lote, resultado, dados) => {
+    const fechamento = montarFechamento(lote, resultado, simulacoes, dados);
+    setFechamentos(registrarFechamento(fechamento));
+    setCardAberto(fechamento); // mostra o resultado na hora
+  };
 
   // Salvar: atualiza o perfil (a partir do 1º lote) e grava a safra inteira.
   const salvarSimulacao = () => {
@@ -755,6 +780,7 @@ export default function App() {
               onAtualizarCotacao={() => reaplicarCotacao(lote.id)}
               onExcluir={() => excluirLote(lote.id)}
               onRecomendar={() => pedirRecomendacao(lote, resultados[i])}
+              onVendi={(dados) => registrarVenda(lote, resultados[i], dados)}
             />
           ))}
 
@@ -806,6 +832,13 @@ export default function App() {
               </div>
             )}
           </section>
+
+          {/* Resultado real (Fase 7): o que aconteceu de verdade */}
+          <PainelDesempenho
+            fechamentos={fechamentos}
+            onCard={setCardAberto}
+            onExcluir={(id) => setFechamentos(excluirFechamento(id))}
+          />
 
           {/* Alertas proativos: "me avise quando chegar a R$ X" (Fase 6) */}
           <PainelAlertas usuario={usuario} cotacoes={cotacoes} perfil={perfil} />
@@ -1059,6 +1092,11 @@ export default function App() {
           )}
 
           <TabBar ativa={abaAtiva} onTrocar={setAbaAtiva} />
+
+          {/* Card de resultado real, compartilhável (Fase 7) */}
+          {cardAberto && (
+            <CardResultado fechamento={cardAberto} onFechar={() => setCardAberto(null)} />
+          )}
         </>
       )}
     </div>
@@ -1116,6 +1154,148 @@ function GraficoCurva({ titulo, cor, curva, spot }) {
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+// "Seu Desempenho" (Fase 7): o placar do ciclo completo — o que o
+// produtor ganhou (ou deixou na mesa) nas vendas reais registradas,
+// sempre comparando com vender no dia da simulação original. Os números
+// saem todos de calcularResultadoReal (modelo do app) — nada projetado.
+function PainelDesempenho({ fechamentos, onCard, onExcluir }) {
+  if (fechamentos.length === 0) {
+    return (
+      <section style={st.historicoPainel}>
+        <h2 style={st.tituloSecao}>Seu desempenho</h2>
+        <p style={st.semAlerta}>
+          Quando vender de verdade, toque em “✓ Vendi este lote” na Operação. O GrãoCerto
+          compara a venda real com a simulação original e mostra aqui quanto a decisão
+          rendeu — com um card pronto para compartilhar.
+        </p>
+      </section>
+    );
+  }
+
+  const resumo = resumoDesempenho(fechamentos);
+  const corSaldo = (v) => (v >= 0 ? "#3E6B4F" : "#A4432E");
+  const sinalR$ = (v) => `${v >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(v))}`;
+
+  return (
+    <section style={st.historicoPainel}>
+      <h2 style={st.tituloSecao}>Seu desempenho</h2>
+      <div style={st.desempenhoResumo}>
+        <div style={st.desempenhoTile}>
+          <span style={{ ...st.desempenhoNum, color: corSaldo(resumo.saldoTotal) }}>
+            {sinalR$(resumo.saldoTotal)}
+          </span>
+          <span style={st.desempenhoRotulo}>
+            resultado das decisões vs. vender no dia da simulação
+          </span>
+        </div>
+        {resumo.nSeguindo > 0 && (
+          <div style={st.desempenhoTile}>
+            <span style={{ ...st.desempenhoNum, color: corSaldo(resumo.ganhoSeguindo) }}>
+              {sinalR$(resumo.ganhoSeguindo)}
+            </span>
+            <span style={st.desempenhoRotulo}>
+              seguindo o GrãoCerto ({resumo.nSeguindo}{" "}
+              {resumo.nSeguindo === 1 ? "venda" : "vendas"})
+            </span>
+          </div>
+        )}
+        {resumo.nContrariando > 0 && (
+          <div style={st.desempenhoTile}>
+            <span style={{ ...st.desempenhoNum, color: corSaldo(resumo.saldoContrariando) }}>
+              {sinalR$(resumo.saldoContrariando)}
+            </span>
+            <span style={st.desempenhoRotulo}>
+              por conta própria ({resumo.nContrariando}{" "}
+              {resumo.nContrariando === 1 ? "venda" : "vendas"})
+            </span>
+          </div>
+        )}
+        {resumo.nVerificaveis > 0 && (
+          <div style={st.desempenhoTile}>
+            <span style={st.desempenhoNum}>
+              {resumo.acertos} de {resumo.nVerificaveis}
+            </span>
+            <span style={st.desempenhoRotulo}>recomendações confirmadas pelo mercado</span>
+          </div>
+        )}
+      </div>
+
+      {fechamentos.map((f) => {
+        const r = calcularResultadoReal(f);
+        return (
+          <div key={f.id} style={st.simLinha}>
+            <div style={st.simInfo}>
+              <span style={st.simDesc}>{fraseResultado(f, r)}</span>
+              <span style={st.simData}>
+                {CULTURAS[f.cultura]?.nome || f.cultura} · {fmtBRL(f.sacas)} sc · vendeu{" "}
+                {fmtData(f.dataVendaReal)} a R$ {fmtBRL(f.precoVendaReal, 2)}
+                {f.semBaseline ? " · sem simulação salva na época" : ""}
+              </span>
+            </div>
+            <div style={st.simAcoes}>
+              <button type="button" style={st.simBtn} onClick={() => onCard(f)}>
+                Ver card
+              </button>
+              <button
+                type="button"
+                style={st.simBtnExcluir}
+                onClick={() => onExcluir(f.id)}
+                aria-label="Excluir registro de venda"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+// Modal com o card visual do resultado, para baixar/compartilhar.
+function CardResultado({ fechamento, onFechar }) {
+  const canvasRef = useRef(null);
+  const [compartilhavel, setCompartilhavel] = useState(false);
+  const resultado = useMemo(() => calcularResultadoReal(fechamento), [fechamento]);
+
+  useEffect(() => {
+    if (canvasRef.current) desenharCard(canvasRef.current, fechamento, resultado);
+    setCompartilhavel(typeof navigator !== "undefined" && !!navigator.canShare);
+  }, [fechamento, resultado]);
+
+  return (
+    <div style={st.cardOverlay} role="dialog" aria-label="Card de resultado" onClick={onFechar}>
+      <div style={st.cardCaixa} onClick={(e) => e.stopPropagation()}>
+        <canvas ref={canvasRef} style={st.cardCanvas} />
+        <div style={st.cardAcoes}>
+          <button
+            type="button"
+            style={st.btnPrimario}
+            onClick={() => baixarCard(canvasRef.current)}
+          >
+            Baixar imagem
+          </button>
+          {compartilhavel && (
+            <button
+              type="button"
+              style={st.btnSecundario}
+              onClick={async () => {
+                const ok = await compartilharCard(canvasRef.current);
+                if (!ok) baixarCard(canvasRef.current); // sem share de arquivo → baixa
+              }}
+            >
+              Compartilhar
+            </button>
+          )}
+          <button type="button" style={st.btnSecundario} onClick={onFechar}>
+            Fechar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1400,9 +1580,24 @@ function CartaoLote({
   onAtualizarCotacao,
   onExcluir,
   onRecomendar,
+  onVendi,
 }) {
   const margem = Math.abs(resultado.vantagemPorSaca);
   const fraseAtual = frase && frase.assinatura === assinaturaLote(lote);
+
+  // Formulário "Vendi este lote" (Fase 7): data e preço reais da venda
+  const [vendendo, setVendendo] = useState(false);
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const [dataVenda, setDataVenda] = useState(hojeISO);
+  const [precoVenda, setPrecoVenda] = useState("");
+
+  const confirmarVenda = () => {
+    const preco = Number(String(precoVenda).replace(",", "."));
+    if (!preco || preco <= 0 || !dataVenda) return;
+    onVendi({ dataVenda, precoVenda: preco });
+    setVendendo(false);
+    setPrecoVenda("");
+  };
 
   return (
     <section style={st.loteBloco}>
@@ -1411,6 +1606,14 @@ function CartaoLote({
           Lote {indice + 1} · {CULTURAS[lote.cultura]?.nome || lote.cultura} ·{" "}
           {fmtBRL(lote.sacas)} sacas
         </span>
+        <button
+          type="button"
+          style={st.vendiBtn}
+          onClick={() => setVendendo(!vendendo)}
+          aria-expanded={vendendo}
+        >
+          {vendendo ? "Cancelar" : "✓ Vendi este lote"}
+        </button>
         {podeExcluir && (
           <button
             type="button"
@@ -1422,6 +1625,46 @@ function CartaoLote({
           </button>
         )}
       </div>
+
+      {vendendo && (
+        <div style={st.vendiForm}>
+          <p style={st.formIntro}>
+            Fechou negócio? Registre a venda real para o GrãoCerto comparar com o que foi
+            simulado — o resultado aparece em Inteligência → Seu Desempenho.
+          </p>
+          <div style={st.alertaForm}>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>Quando vendeu</span>
+              <input
+                type="date"
+                value={dataVenda}
+                max={hojeISO}
+                onChange={(e) => setDataVenda(e.target.value)}
+                style={st.select}
+              />
+            </label>
+            <label style={st.campo}>
+              <span style={st.campoRotulo}>Preço da venda (R$/saca)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={precoVenda}
+                onChange={(e) => setPrecoVenda(e.target.value)}
+                placeholder={`ex.: ${fmtBRL(lote.precoHoje, 2)}`}
+                style={st.select}
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            style={st.btnPrimario}
+            onClick={confirmarVenda}
+            disabled={!Number(String(precoVenda).replace(",", "."))}
+          >
+            Registrar venda real
+          </button>
+        </div>
+      )}
 
       <div style={st.grade}>
         {/* Coluna de entrada */}
@@ -2402,6 +2645,74 @@ const st = {
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     columnGap: 12,
   },
+  vendiBtn: {
+    border: "1px solid #3E6B4F",
+    background: "#EDF3EE",
+    color: "#3E6B4F",
+    fontFamily: "'Archivo', sans-serif",
+    fontWeight: 700,
+    fontSize: 13,
+    padding: "6px 12px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  vendiForm: {
+    background: "#EDF3EE",
+    border: "1px solid #C6CFBF",
+    borderRadius: 12,
+    padding: "14px 16px 16px",
+    marginBottom: 16,
+  },
+  desempenhoResumo: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gap: 10,
+    marginBottom: 16,
+  },
+  desempenhoTile: {
+    background: "#FFFDF6",
+    border: "1px solid #E4E8DF",
+    borderRadius: 10,
+    padding: "12px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  desempenhoNum: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontWeight: 700,
+    fontSize: 22,
+    color: "#1E2A22",
+  },
+  desempenhoRotulo: { fontSize: 12.5, color: "#5A6B5D", lineHeight: 1.4 },
+  cardOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(30,42,34,.55)",
+    zIndex: 60,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  cardCaixa: {
+    background: "#F2F4EF",
+    borderRadius: 14,
+    padding: 14,
+    maxWidth: 420,
+    width: "100%",
+    maxHeight: "92vh",
+    overflowY: "auto",
+    boxShadow: "0 12px 40px rgba(30,42,34,.35)",
+  },
+  cardCanvas: {
+    width: "100%",
+    height: "auto",
+    borderRadius: 8,
+    display: "block",
+    border: "1px solid #C6CFBF",
+  },
+  cardAcoes: { display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" },
   historicoPainel: {
     maxWidth: 980,
     margin: "0 auto 20px",

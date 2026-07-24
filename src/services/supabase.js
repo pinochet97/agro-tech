@@ -11,8 +11,11 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const url = (import.meta.env.VITE_SUPABASE_URL || "").trim();
-const anon = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+// import.meta.env existe no Vite; o guard permite importar os serviços
+// em Node puro (testes das funções que não usam nuvem)
+const env = import.meta.env || {};
+const url = (env.VITE_SUPABASE_URL || "").trim();
+const anon = (env.VITE_SUPABASE_ANON_KEY || "").trim();
 
 export const supabase = url && anon ? createClient(url, anon) : null;
 

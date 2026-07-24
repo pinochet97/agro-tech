@@ -141,6 +141,32 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   - Risco conhecido: o runner do Actions é IP de datacenter — o CEPEA pode responder
     403 como na Vercel (aí `obterCotacoes()` cai no snapshot/último sucesso; se nada
     vier, o cron loga e sai com erro). Verificar no primeiro run real.
+- **Resultado real** — Fase 7 "Histórico de Resultado Real" (argumento de venda
+  principal do app): fecha o ciclo simulou → recomendou → vendeu de verdade.
+  - Botão **"✓ Vendi este lote"** em cada cartão da Operação: formulário de data +
+    preço reais → `montarFechamento()` acha a **simulação original** (a salva mais
+    recente ANTES da venda com lote da mesma cultura, sacas mais próximas) e registra;
+    sem simulação salva, compara com os números atuais e marca `semBaseline`.
+  - `src/services/fechamentos.js` (localStorage `graocerto.fechamentos.v1` + sync
+    fire-and-forget na tabela `lotes_fechados` — migração
+    `supabase/migrations/02_fechamentos.sql`, NÃO executada; colunas explícitas
+    preco_venda_real/data_venda_real/decisao_tomada + `dados` JSONB, RLS por usuário).
+  - **`calcularResultadoReal()`**: compara o caminho real (vender em data_venda_real
+    ao preço real, MENOS os custos de segurar pelo tempo que de fato passou — mesmas
+    fórmulas de `calcularLote()` com `mesesReais`) vs. vender no dia da simulação.
+    Nada é projeção: só preços/datas que aconteceram. `decisaoTomada`: venda ≤ ~15
+    dias da simulação = "vendeu", senão "segurou". O acerto da recomendação só conta
+    quando houve espera real (venda no dia não tem contrafactual honesto — `acertou:
+    null`). Testado com 29 casos, incluindo conferência manual das fórmulas.
+  - **"Seu Desempenho"** (Inteligência): tiles com saldo total, "seguindo o GrãoCerto"
+    × "por conta própria" e "recomendações confirmadas pelo mercado", + lista dos
+    fechamentos com frase honesta nos DOIS sentidos ("ganhou R$ X a mais por seguir" /
+    "deixou R$ Y na mesa" / "desta vez o mercado andou contra").
+  - **Card compartilhável** (`src/services/cardResultado.js`): canvas puro 1080×1350
+    (sem dependência), identidade do app + picote de romaneio; abre na hora do
+    registro e no "Ver card". Baixar PNG + Web Share API (WhatsApp) com fallback pro
+    download. Fontes via `document.fonts.load`; `roundRect` com fallback. Validado
+    visualmente (PNG extraído do canvas e inspecionado).
 - **Dashboard de 4 abas** — Fase 2 "Dashboard Real": tab bar fixa no rodapé
   (mobile-first), estado `abaAtiva` no App. **Home** = sacas totais, valor hoje,
   cotação do dia, "Recomendação do dia" (veredito consolidado) e alertas derivados do
