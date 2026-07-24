@@ -158,6 +158,162 @@ export async function obterCotacoes() {
   }
 }
 
+// ── Futuros B3 (curva de preço esperado) ─────────────────────
+//
+// Fonte: Boletim Diário da B3 (arquivos.b3.com.br/bdi), tabela
+// "Negócios consolidados do pregão não regular" — descoberta empírica:
+// é uma tabela MINÚSCULA (~44 linhas, 1 página) que carrega justamente
+// os ajustes dos futuros agro: CCM (milho, R$/saca) e SJC (soja
+// Chicago, USD/saca). A tabela principal (7.800 linhas) NÃO tem os
+// futuros puros de grão — só as opções. Requisições server-side
+// funcionam com cabeçalhos de navegador (sem desafio Cloudflare).
+// SJC é convertida para R$/saca com o câmbio da AwesomeAPI; sem
+// câmbio, a curva de soja é omitida (o milho segue).
+
+const FUTUROS_CACHE_MS = 30 * 60 * 1000;
+let cacheFuturos = null; // { dados, expira }
+
+const MES_CODIGO = {
+  F: 1, G: 2, H: 3, J: 4, K: 5, M: 6, N: 7, Q: 8, U: 9, V: 10, X: 11, Z: 12,
+};
+const MES_ROTULO = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+const BDI_BASE = "https://arquivos.b3.com.br/bdi/table/ConsolidatedTradesDerivativesAfter";
+const HEADERS_BDI = {
+  "User-Agent": HEADERS_NAVEGADOR["User-Agent"],
+  Accept: "application/json",
+  "Accept-Language": "pt-BR,pt;q=0.9",
+  "Content-Type": "application/json",
+  Referer: "https://arquivos.b3.com.br/bdi/tabelas?lang=pt-BR",
+  Origin: "https://arquivos.b3.com.br",
+};
+
+function isoDia(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+async function buscarCambioUsd() {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const r = await fetch("https://economia.awesomeapi.com.br/json/last/USD-BRL", {
+      headers: { Accept: "application/json" },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const bid = Number(j?.USDBRL?.bid);
+    return Number.isFinite(bid) && bid > 0 ? bid : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Busca a tabela do BDI para uma data; devolve as linhas ou null.
+async function buscarBdiDia(dataIso) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${BDI_BASE}/${dataIso}/${dataIso}/1/1000`, {
+      method: "POST",
+      headers: HEADERS_BDI,
+      body: JSON.stringify({}),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) return null;
+    const txt = await r.text();
+    if (!txt || /challenge-platform|_cf_chl/i.test(txt)) return null;
+    const valores = JSON.parse(txt)?.table?.values;
+    return Array.isArray(valores) && valores.length ? valores : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+const temGrao = (linhas) =>
+  (linhas || []).some((v) => /^(CCM|SJC)[FGHJKMNQUVXZ]\d{2}$/.test(String(v[1] || "")));
+
+async function buscarFuturosB3() {
+  // acha o último pregão COM os futuros de grão publicados: hoje, ontem, …
+  // (fins de semana, feriados e boletins parciais do dia corrente)
+  let linhas = null;
+  let dataPregao = null;
+  for (let volta = 0; volta < 7; volta++) {
+    const d = new Date(Date.now() - volta * 24 * 60 * 60 * 1000);
+    const dia = isoDia(d);
+    const ls = await buscarBdiDia(dia);
+    if (temGrao(ls)) {
+      linhas = ls;
+      dataPregao = dia;
+      break;
+    }
+  }
+  if (!linhas) throw new Error("boletim da B3 indisponível nos últimos 7 dias");
+
+  const cambio = await buscarCambioUsd();
+
+  // linha: [data, ticker, isin, segmento, mercado, ...; 11 = ajuste]
+  const curvas = { milho: [], soja: [] };
+  for (const v of linhas) {
+    const tk = String(v[1] || "");
+    const m = /^(CCM|SJC)([FGHJKMNQUVXZ])(\d{2})$/.exec(tk);
+    if (!m) continue;
+    const ajuste = Number(v[11]);
+    if (!Number.isFinite(ajuste) || ajuste <= 0) continue;
+    const mes = MES_CODIGO[m[2]];
+    const ano = 2000 + Number(m[3]);
+    const vencimento = `${ano}-${String(mes).padStart(2, "0")}`;
+    const rotulo = `${MES_ROTULO[mes]}/${String(ano).slice(2)}`;
+    if (m[1] === "CCM") {
+      // CCM já é R$/saca
+      curvas.milho.push({ codigo: tk, vencimento, rotulo, preco: ajuste });
+    } else if (cambio) {
+      // SJC é USD/saca → converte
+      curvas.soja.push({
+        codigo: tk,
+        vencimento,
+        rotulo,
+        preco: Number((ajuste * cambio).toFixed(2)),
+        precoUsd: ajuste,
+      });
+    }
+  }
+  curvas.milho.sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  curvas.soja.sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+
+  if (!curvas.milho.length && !curvas.soja.length) {
+    throw new Error("nenhum futuro de grão no boletim");
+  }
+
+  return {
+    fonte: "B3 · Boletim Diário (ajustes do pregão)",
+    dataPregao,
+    cambio: cambio ? { usdbrl: cambio, fonte: "AwesomeAPI" } : null,
+    avisoSoja: cambio ? null : "câmbio indisponível — curva de soja omitida",
+    curvas,
+  };
+}
+
+// Busca com cache; em caso de falha, serve o último sucesso (se houver).
+export async function obterFuturosB3() {
+  const agora = Date.now();
+  if (cacheFuturos && cacheFuturos.expira > agora) {
+    return { ...cacheFuturos.dados, cacheHit: true };
+  }
+  try {
+    const dados = await buscarFuturosB3();
+    cacheFuturos = { dados, expira: agora + FUTUROS_CACHE_MS };
+    return { ...dados, cacheHit: false };
+  } catch (e) {
+    if (cacheFuturos) return { ...cacheFuturos.dados, cacheHit: true, stale: true };
+    throw e;
+  }
+}
+
 // ── Entrada conversacional (IA + fallback de regras) ─────────
 
 const MODELO_IA = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";

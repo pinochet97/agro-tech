@@ -15,6 +15,7 @@
 import { createServer } from "node:http";
 import {
   obterCotacoes,
+  obterFuturosB3,
   interpretarTextoNucleo,
   interpretarImagemNucleo,
   recomendarLoteNucleo,
@@ -76,6 +77,16 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/api/cotacoes" || url.pathname === "/cotacoes") {
     try {
       const dados = await obterCotacoes();
+      res.setHeader("Cache-Control", "public, max-age=900");
+      return json(200, dados);
+    } catch (e) {
+      return json(502, { erro: String(e.message || e) });
+    }
+  }
+
+  if (url.pathname === "/api/futuros") {
+    try {
+      const dados = await obterFuturosB3();
       res.setHeader("Cache-Control", "public, max-age=900");
       return json(200, dados);
     } catch (e) {

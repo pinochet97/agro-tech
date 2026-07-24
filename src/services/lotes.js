@@ -37,6 +37,8 @@ export function criarLote(base = {}) {
     custos: { ...CUSTOS_PADRAO, ...(base.custos || {}) },
     // true = o produtor digitou o preço; a cotação ao vivo não sobrescreve
     precoEditado: base.precoEditado ?? false,
+    // true = o produtor mexeu no preço esperado; a curva B3 não sobrescreve
+    precoEsperadoEditado: base.precoEsperadoEditado ?? false,
   };
 }
 

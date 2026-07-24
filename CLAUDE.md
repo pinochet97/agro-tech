@@ -169,7 +169,23 @@ Visão de longo prazo (não implementar ainda, só para contexto):
      `/api/interpretar*` (entrada conversacional), com `ANTHROPIC_API_KEY` como env da função.
    - Considerar respeitar mais o CEPEA: cache compartilhado/mais longo, e um cron diário que
      também atualiza `public/cotacoes.json` (mantém o fallback fresco).
-3. Curva de futuros B3 para sugerir o preço esperado por vencimento (em vez de chute do usuário).
+3. ~~Curva de futuros B3 para sugerir o preço esperado por vencimento.~~ ✅ Feito (Fase 5):
+   - **Fonte (descoberta empírica, jul/2026):** Boletim Diário da B3
+     (`arquivos.b3.com.br/bdi/table/ConsolidatedTradesDerivativesAfter/{dia}/{dia}/1/1000`,
+     POST com corpo `{}`) — a tabela "não regular" é MINÚSCULA (~44 linhas) e tem
+     justamente os futuros de grão: **CCM** (milho, R$/saca) e **SJC** (soja Chicago,
+     **USD/saca** — converter com câmbio; usamos AwesomeAPI USD-BRL). A tabela principal
+     (7.800 linhas) NÃO tem os futuros puros de grão, só as opções. Server-side funciona
+     com cabeçalhos de navegador. O backend volta até 7 dias procurando o último pregão
+     publicado com grãos; cache 30 min + stale.
+   - `obterFuturosB3()` no nucleo, `GET /api/futuros` (dev + serverless),
+     `src/services/futuros.js` no front (`buscarFuturos` + `precoSugerido`).
+   - **Operação**: o preço esperado do lote é sugerido pelo contrato com vencimento mais
+     próximo do horizonte (selo "Sugerido pelo contrato B3 SJCF27 (Jan/27)"); mexeu no
+     slider → `precoEsperadoEditado` e vira "ajustado por você" com botão "Usar contrato".
+     Sem curva (B3 fora/sem backend) → palpite manual de sempre, com aviso.
+   - **Inteligência**: gráficos Recharts das duas curvas com o spot CEPEA como ponto
+     "Hoje". (Recharts pesou o bundle: ~200 KB gzip total; se doer no 3G, lazy-load.)
    *(o item 5, deploy, foi adiantado — ver abaixo)*
 4. ~~Persistência simples das simulações do produtor (começar com backend leve ou local).~~
    ✅ Feito em localStorage: perfil persistente (região, cultura, custos, capacidade,

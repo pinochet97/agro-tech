@@ -17,6 +17,16 @@ import {
   MAX_SIMULACOES,
 } from "./services/simulacoes";
 import { CULTURAS, criarLote, calcularLote, consolidar, retratoParaIA } from "./services/lotes";
+import { buscarFuturos, precoSugerido } from "./services/futuros";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
 
 // ─────────────────────────────────────────────────────────────
 // GrãoCerto — MVP Fase 1: Armazenar ou Vender
@@ -221,6 +231,32 @@ export default function App() {
     });
   }, [cotacoes]);
 
+  // ── Futuros B3: curva de preço esperado (Fase 5) ──────────────
+  const [futuros, setFuturos] = useState(null); // {curvas: {milho, soja}, ...} | null
+
+  useEffect(() => {
+    buscarFuturos().then(setFuturos); // null em falha → segue no manual
+  }, []);
+
+  // Sugere o preço do contrato futuro do horizonte do lote, enquanto o
+  // produtor não sobrescrever o preço esperado (precoEsperadoEditado).
+  useEffect(() => {
+    if (!futuros) return;
+    setLotes((ls) => {
+      let mudou = false;
+      const novo = ls.map((l) => {
+        if (l.precoEsperadoEditado) return l;
+        const sug = precoSugerido(futuros.curvas?.[l.cultura], l.meses);
+        if (sug && l.precoEsperado !== sug.preco) {
+          mudou = true;
+          return { ...l, precoEsperado: sug.preco };
+        }
+        return l;
+      });
+      return mudou ? novo : ls; // mesma referência = sem re-render em loop
+    });
+  }, [futuros, lotes]);
+
   // Rebusca a cotação e reaplica no lote, descartando a edição manual.
   const reaplicarCotacao = async (id) => {
     const dados = await carregarCotacoes();
@@ -237,6 +273,7 @@ export default function App() {
       precoHoje: cot?.preco ?? CULTURAS[c].precoHoje,
       precoEsperado: CULTURAS[c].precoEsperado,
       precoEditado: false,
+      precoEsperadoEditado: false, // curva B3 da nova cultura volta a sugerir
     });
   };
 
@@ -323,7 +360,8 @@ export default function App() {
   // Reabre uma simulação salva: todos os lotes voltam como estavam,
   // e a tela vai para a Operação (é lá que se mexe nos lotes).
   const abrirSimulacao = (s) => {
-    setLotes(s.lotes.map((l) => criarLote({ ...l, precoEditado: true })));
+    // restaura exatamente como estava: cotação e curva não sobrescrevem
+    setLotes(s.lotes.map((l) => criarLote({ ...l, precoEditado: true, precoEsperadoEditado: true })));
     setFrases({});
     setAbaAtiva("operacao");
   };
@@ -401,6 +439,7 @@ export default function App() {
         precoEsperado: c.precoEsperado ?? CULTURAS[cultura].precoEsperado,
         custos: { ...base.custos, ...custos },
         precoEditado: c.precoHoje != null,
+        precoEsperadoEditado: c.precoEsperado != null,
       });
       setLotes((ls) => [...ls, novo]);
       setAlvo(novo.id);
@@ -425,8 +464,13 @@ export default function App() {
       novo.precoHoje = cotacoes?.[cultura]?.preco ?? CULTURAS[cultura].precoHoje;
       novo.precoEditado = false;
     }
-    if (c.precoEsperado != null) novo.precoEsperado = c.precoEsperado;
-    else if (trocouCultura) novo.precoEsperado = CULTURAS[cultura].precoEsperado;
+    if (c.precoEsperado != null) {
+      novo.precoEsperado = c.precoEsperado;
+      novo.precoEsperadoEditado = true; // veio do produtor no chat
+    } else if (trocouCultura) {
+      novo.precoEsperado = CULTURAS[cultura].precoEsperado;
+      novo.precoEsperadoEditado = false;
+    }
 
     setLotes((ls) => ls.map((l) => (l.id === atual.id ? novo : l)));
     return { lote: novo, resultado: calcularLote(novo), indice: i };
@@ -704,6 +748,7 @@ export default function App() {
               podeExcluir={lotes.length > 1}
               frase={frases[lote.id]}
               gerando={gerando === lote.id}
+              sugestaoFuturo={precoSugerido(futuros?.curvas?.[lote.cultura], lote.meses)}
               onMudar={(campos) => mudarLote(lote.id, campos)}
               onTrocarCultura={(c) => trocarCultura(lote.id, c)}
               onAtualizarCotacao={() => reaplicarCotacao(lote.id)}
@@ -728,25 +773,37 @@ export default function App() {
           {abaAtiva === "inteligencia" && (
           <>
           <section style={st.historicoPainel}>
-            <h2 style={st.tituloSecao}>Preço futuro</h2>
-            <div style={st.grafPlaceholder}>
-              <svg viewBox="0 0 320 120" style={{ width: "100%", height: "auto" }} aria-hidden="true">
-                <line x1="0" y1="110" x2="320" y2="110" stroke="#D8DED2" strokeWidth="1" />
-                <polyline
-                  points="0,90 40,84 80,88 120,70 160,74 200,58 240,62 280,48 320,52"
-                  fill="none"
-                  stroke="#C99B2F"
-                  strokeWidth="3"
-                  strokeDasharray="6 5"
-                />
-                <circle cx="0" cy="90" r="4" fill="#3E6B4F" />
-              </svg>
-              <p style={st.grafTexto}>
-                Curva de futuros B3 por vencimento — em breve, para sugerir o preço esperado em
-                vez do seu palpite. Por enquanto, o preço esperado é o controle deslizante de
-                cada lote na Operação.
-              </p>
-            </div>
+            <h2 style={st.tituloSecao}>Curva de futuros B3</h2>
+            {futuros ? (
+              <>
+                {["soja", "milho"].map((c) =>
+                  futuros.curvas?.[c]?.length ? (
+                    <GraficoCurva
+                      key={c}
+                      titulo={CULTURAS[c].nome}
+                      cor={c === "soja" ? "#3E6B4F" : "#C99B2F"}
+                      curva={futuros.curvas[c]}
+                      spot={cotacoes?.[c]?.preco}
+                    />
+                  ) : null,
+                )}
+                <p style={st.grafTexto}>
+                  Ajustes do pregão de {fmtData(futuros.dataPregao)} ({futuros.fonte}).
+                  {futuros.cambio
+                    ? ` Soja: contrato SJC em US$/saca convertido a R$ ${fmtBRL(futuros.cambio.usdbrl, 2)}.`
+                    : ` ${futuros.avisoSoja || ""}`}{" "}
+                  “Hoje” = indicador CEPEA/ESALQ. É a curva que sugere o preço esperado dos
+                  lotes na Operação.
+                </p>
+              </>
+            ) : (
+              <div style={st.grafPlaceholder}>
+                <p style={st.grafTexto}>
+                  Curva B3 indisponível agora (fonte fora do ar ou sem backend) — o preço
+                  esperado segue sendo o seu palpite no controle de cada lote da Operação.
+                </p>
+              </div>
+            )}
           </section>
 
           {/* Histórico: revisitar e comparar as últimas simulações */}
@@ -1004,6 +1061,61 @@ export default function App() {
   );
 }
 
+// Curva de futuros de uma cultura: linha por vencimento, com o preço
+// de hoje (CEPEA) como primeiro ponto para dar régua ao produtor.
+function GraficoCurva({ titulo, cor, curva, spot }) {
+  const dados = [
+    ...(typeof spot === "number" ? [{ rotulo: "Hoje", preco: spot }] : []),
+    ...curva.map((c) => ({ rotulo: c.rotulo, preco: c.preco })),
+  ];
+  return (
+    <div style={st.grafBloco}>
+      <div style={st.grafTitulo}>
+        <span style={{ ...st.grafCorPonto, background: cor }} aria-hidden="true" />
+        {titulo} · R$/saca
+      </div>
+      <ResponsiveContainer width="100%" height={190}>
+        <LineChart data={dados} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke="#E4E8DF" strokeDasharray="4 4" vertical={false} />
+          <XAxis
+            dataKey="rotulo"
+            tick={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", fill: "#5A6B5D" }}
+            tickLine={false}
+            axisLine={{ stroke: "#C6CFBF" }}
+          />
+          <YAxis
+            domain={["auto", "auto"]}
+            width={46}
+            tick={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", fill: "#5A6B5D" }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v) => fmtBRL(v)}
+          />
+          <Tooltip
+            formatter={(v) => [`R$ ${fmtBRL(v, 2)}/saca`, "Ajuste"]}
+            contentStyle={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 12,
+              border: "1px solid #C6CFBF",
+              borderRadius: 8,
+              background: "#FFFDF6",
+            }}
+          />
+          <Line
+            type="monotone"
+            dataKey="preco"
+            stroke={cor}
+            strokeWidth={2.5}
+            dot={{ r: 3, fill: cor }}
+            activeDot={{ r: 5 }}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 // Login por magic link (Supabase Auth): o produtor digita o e-mail e
 // recebe um link — sem senha, que é atrito puro no campo.
 function LoginBox() {
@@ -1112,6 +1224,7 @@ function CartaoLote({
   podeExcluir,
   frase,
   gerando,
+  sugestaoFuturo,
   onMudar,
   onTrocarCultura,
   onAtualizarCotacao,
@@ -1339,10 +1452,45 @@ function CartaoLote({
               max={lote.precoHoje * 1.35}
               step={0.5}
               value={lote.precoEsperado}
-              onChange={(e) => onMudar({ precoEsperado: parseFloat(e.target.value) })}
+              onChange={(e) =>
+                onMudar({ precoEsperado: parseFloat(e.target.value), precoEsperadoEditado: true })
+              }
               style={{ width: "100%" }}
               aria-label="Preço esperado por saca"
             />
+
+            {/* Curva B3: de onde vem o preço esperado */}
+            <div style={st.futuroLinha}>
+              {sugestaoFuturo ? (
+                lote.precoEsperadoEditado ? (
+                  <>
+                    <span style={st.futuroInfo}>
+                      Contrato B3 {sugestaoFuturo.codigo} ({sugestaoFuturo.rotulo}): R${" "}
+                      {fmtBRL(sugestaoFuturo.preco, 2)} · ajustado por você
+                    </span>
+                    <button
+                      type="button"
+                      style={st.cotacaoBtn}
+                      onClick={() =>
+                        onMudar({ precoEsperado: sugestaoFuturo.preco, precoEsperadoEditado: false })
+                      }
+                    >
+                      Usar contrato
+                    </button>
+                  </>
+                ) : (
+                  <span style={st.futuroInfo}>
+                    <span style={st.cotacaoPonto} aria-hidden="true" />
+                    Sugerido pelo contrato B3 {sugestaoFuturo.codigo} ({sugestaoFuturo.rotulo})
+                  </span>
+                )
+              ) : (
+                <span style={st.futuroManual}>
+                  Curva B3 indisponível — o preço esperado é seu palpite no controle acima.
+                </span>
+              )}
+            </div>
+
             <div style={st.empate}>
               <span style={st.empateRotulo}>Preço de empate</span>
               <span style={st.empateNum}>R$ {fmtBRL(resultado.precoEmpate, 2)}/saca</span>
@@ -1602,6 +1750,41 @@ const st = {
     marginBottom: 8,
   },
   grafTexto: { fontSize: 13, color: "#7A897C", lineHeight: 1.5, margin: "10px 0 8px" },
+  grafBloco: { marginBottom: 18 },
+  grafTitulo: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#3B473D",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    marginBottom: 6,
+  },
+  grafCorPonto: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
+  futuroLinha: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    margin: "8px 0 4px",
+    flexWrap: "wrap",
+  },
+  futuroInfo: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    color: "#3E6B4F",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  },
+  futuroManual: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11,
+    color: "#8A947F",
+  },
   contaFeedback: {
     textAlign: "center",
     fontFamily: "'IBM Plex Mono', monospace",
