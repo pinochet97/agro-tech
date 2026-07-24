@@ -39,10 +39,25 @@ Visão de longo prazo (não implementar ainda, só para contexto):
     é paga (~R$ 10,5 mil); esta rota do widget é gratuita.
   - Dados CEPEA/ESALQ: **CC BY-NC 4.0** (atribuição obrigatória, uso não-comercial) — a
     atribuição está no campo `fonte` e visível na interface.
-- **Entrada conversacional** (texto, voz e foto): o produtor conta como está a safra
-  ("colhi 12 mil sacas de soja, tô devendo no banco a 1,2 ao mês") e o app extrai os
-  parâmetros, mostra um card "foi isso que eu entendi" e **só aplica após confirmação**
-  — o veredito nunca muda sem o produtor validar o que foi entendido.
+- **Chat com memória** (Fase 3 "IA Conversacional Real"): botão flutuante 💬 disponível
+  em todas as abas abre um chat (texto, voz e foto). O histórico INTEIRO vai ao backend
+  (`{mensagens: [{papel: "produtor"|"graocerto", texto}], lote}`), então "e se eu vender
+  só metade?" resolve contra a quantidade discutida antes (validado: 10.000 → 5.000;
+  "um terço de 6.000" → 2.000). Os campos que o produtor muda são aplicados ao lote em
+  foco (seletor "Falando sobre" no chat; "novo lote" cria um) e o APP recalcula — uma
+  mensagem 📊 com veredito/vantagem/empate calculados localmente entra no chat. A voz
+  (Web Speech) preenche o campo para o produtor conferir e enviar; a foto de romaneio/NF
+  vira mensagem no chat com os campos aplicados. Sem IA/backend: regras locais na última
+  mensagem, sem memória, com aviso. O painel antigo de frase única + card de confirmação
+  foi SUBSTITUÍDO pelo chat (a aplicação é direta porque a mensagem é uma instrução
+  explícita do produtor; a mensagem 📊 dá a visibilidade do que mudou).
+  - **Armadilhas de API que custaram debug (jul/2026):** com structured outputs +
+    adaptive thinking a resposta pode vir com blocos intercalados (thinking, text,
+    thinking, text) e o campo de TEXTO LIVRE do JSON sai corrompido/embaralhado — 
+    (1) sempre pegar o ÚLTIMO bloco de texto (`textoFinal()` no nucleo), e (2) no chat
+    o thinking fica DESLIGADO (omitido). Além disso, mensagem corrompida que entra no
+    histórico contamina as respostas seguintes (o modelo imita o próprio lixo) — a
+    conversa é em memória, recarregar zera.
   - Backend: `POST /api/interpretar` aceita três formas — `{texto}` (extrai),
     `{texto, lote}` (extrai + gera a frase) e `{lote}` (só a frase). E
     `POST /api/interpretar-imagem` (foto de

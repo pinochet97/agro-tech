@@ -49,6 +49,26 @@ export async function interpretarTexto(texto) {
   }
 }
 
+// CHAT com memória (Fase 3): manda o histórico [{papel, texto}] + o
+// retrato do lote em foco. Nunca lança: sem backend, cai nas regras
+// locais sobre a última mensagem (sem memória, com aviso).
+export async function conversar(mensagens, retrato = null) {
+  try {
+    return await postJson("/api/interpretar", { mensagens, lote: retrato || undefined });
+  } catch {
+    const ultima = [...mensagens].reverse().find((m) => m.papel !== "graocerto");
+    const campos = ultima ? extrairParametros(ultima.texto) : {};
+    return {
+      resposta: Object.keys(campos).length
+        ? "Entendi os números da sua mensagem — vou aplicar na simulação."
+        : 'Não achei números nessa mensagem. Tente algo como "colhi 12 mil sacas de soja".',
+      campos,
+      fonte: "regras",
+      aviso: "Backend fora do ar — entendi por regras, no seu navegador, sem memória.",
+    };
+  }
+}
+
 // Frase de recomendação para um lote. `retrato` traz o resultado JÁ
 // calculado pelo app (ver services/lotes.js) — a IA só o veste em
 // linguagem de produtor. Nunca lança: sem backend, monta localmente.

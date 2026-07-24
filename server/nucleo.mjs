@@ -20,6 +20,7 @@ import {
   fraseLocalRecomendacao,
   SCHEMA_PARAMETROS,
   SCHEMA_RECOMENDACAO,
+  SCHEMA_CHAT,
 } from "../src/services/extrator.js";
 
 // Carrega .env da raiz em dev (sem dependência de dotenv). Na Vercel o
@@ -197,6 +198,14 @@ Como escrever:
 - Valores em reais no padrão brasileiro (R$ 35.000, R$ 141,20). Pode abreviar milhares como "R$ 35 mil".
 - Não use jargão de investimento, não prometa resultado futuro e não diga que é conselho financeiro. Você está explicando uma conta de custo, não recomendando investimento.`;
 
+// Com adaptive thinking a resposta pode intercalar blocos (thinking, text,
+// thinking, text…). O JSON completo do structured output é sempre o ÚLTIMO
+// bloco de texto — pegar o primeiro devolve um rascunho intermediário.
+function textoFinal(resp) {
+  const blocos = resp.content.filter((b) => b.type === "text");
+  return blocos[blocos.length - 1]?.text ?? "";
+}
+
 // Remove nulls e separa o resumo — devolve só os campos preenchidos.
 function limparSaidaIA(saida) {
   const { resumo, ...resto } = saida || {};
@@ -235,8 +244,7 @@ async function interpretarTextoIA(texto, retratoLote) {
     { timeout: 60_000 },
   );
   if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
-  const bloco = resp.content.find((b) => b.type === "text");
-  return limparSaidaIA(JSON.parse(bloco.text));
+  return limparSaidaIA(JSON.parse(textoFinal(resp)));
 }
 
 // Gera só a frase de recomendação para um lote (sem extrair parâmetros).
@@ -261,8 +269,7 @@ async function recomendarIA(retratoLote) {
     { timeout: 60_000 },
   );
   if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
-  const bloco = resp.content.find((b) => b.type === "text");
-  const saida = JSON.parse(bloco.text);
+  const saida = JSON.parse(textoFinal(resp));
   if (!saida?.frase_recomendacao) throw new Error("resposta sem frase");
   return saida.frase_recomendacao;
 }
@@ -297,8 +304,7 @@ async function interpretarImagemIA(imagemB64, mediaType) {
     { timeout: 90_000 },
   );
   if (resp.stop_reason === "refusal") throw new Error("leitura recusada");
-  const bloco = resp.content.find((b) => b.type === "text");
-  return limparSaidaIA(JSON.parse(bloco.text));
+  return limparSaidaIA(JSON.parse(textoFinal(resp)));
 }
 
 // Interpreta a frase: IA quando configurada, senão regras locais.
@@ -354,4 +360,91 @@ export async function recomendarLoteNucleo(retratoLote) {
 export async function interpretarImagemNucleo(imagemB64, mediaType) {
   const { campos, resumo } = await interpretarImagemIA(imagemB64, mediaType);
   return { campos, resumo, fonte: "documento" };
+}
+
+// ── Chat com memória (Fase 3) ────────────────────────────────
+
+const SISTEMA_CHAT = `Você é o GrãoCerto conversando com um produtor rural brasileiro sobre a comercialização da safra dele (armazenar ou vender). Português do Brasil, linguagem simples de produtor, respostas de no máximo 2–3 frases.
+
+CONTEXTO DA CONVERSA:
+- Mantenha o fio da conversa: "e se eu vender só metade?" refere-se ao lote/quantidade discutidos nas mensagens anteriores. "metade de 10.000 sacas" = 5000. Conversões simples de quantidade são permitidas (metade, 30%, toneladas → kg ÷ 60).
+- A última mensagem pode trazer um bloco LOTE ATUAL com o estado e o RESULTADO da simulação, já calculados pelo aplicativo. Use esses números para responder ("hoje a conta diz vender: −R$ 15,47/saca...").
+
+REGRA CRÍTICA DE NÚMEROS:
+- Você NUNCA calcula resultado de simulação (vantagem, custo de segurar, preço de empate). Esses números só existem se vierem prontos no bloco LOTE ATUAL. Se o produtor mudar algo e quiser o novo resultado, preencha os campos, avise que o aplicativo recalcula na hora, e NÃO invente o número novo.
+- Nunca cite um número que não esteja na conversa ou no LOTE ATUAL.
+
+SAÍDA (JSON):
+- "resposta": o texto do chat — uma resposta completa e natural, como numa conversa de WhatsApp.
+- "campos": APENAS o que o produtor mudou/informou na ÚLTIMA mensagem (null nos demais). Se nada mudou, tudo null. O aplicativo aplica esses campos ao lote e recalcula.
+
+Exemplos de boa "resposta" (sempre uma frase completa, começando com letra maiúscula):
+EXEMPLO 1 (produtor mudou algo) → "Metade dá 5.000 sacas. Apliquei aqui e o app já recalcula o veredito pra você."
+EXEMPLO 2 (pergunta sobre o resultado que está no LOTE ATUAL) → "Hoje a conta diz vender. Segurando, você perde R$ 13,20 por saca, e o empate só vem acima de R$ 166,40."
+EXEMPLO 3 (dúvida geral) → responda em 1–2 frases simples, sem citar valores que não estão na conversa.
+
+Você explica a conta de custo do aplicativo; não é conselho de investimento e você não promete preço futuro.`;
+
+async function conversarIA(mensagens, retratoLote) {
+  const contexto = retratoLote
+    ? `\n\n[LOTE ATUAL — números já calculados pelo aplicativo]\n${JSON.stringify(retratoLote)}`
+    : "";
+  // histórico → papéis da API; o contexto do lote entra só na última mensagem
+  const msgs = mensagens.map((m, i) => ({
+    role: m.papel === "graocerto" ? "assistant" : "user",
+    content: i === mensagens.length - 1 ? `${m.texto}${contexto}` : m.texto,
+  }));
+
+  const resp = await ia.messages.create(
+    {
+      model: MODELO_IA,
+      max_tokens: 2048,
+      // SEM thinking (omitido = desligado no Opus 4.8): com thinking
+      // intercalado, o campo de texto livre do structured output vinha
+      // corrompido (frases embaralhadas). Um bloco só resolve, e a
+      // extração conversacional não precisa de raciocínio profundo.
+      output_config: {
+        effort: "medium",
+        format: { type: "json_schema", schema: SCHEMA_CHAT },
+      },
+      system: SISTEMA_CHAT,
+      messages: msgs,
+    },
+    { timeout: 60_000 },
+  );
+  if (resp.stop_reason === "refusal") throw new Error("pedido recusado");
+  const saida = JSON.parse(textoFinal(resp));
+  const campos = Object.fromEntries(
+    Object.entries(saida.campos || {}).filter(([, v]) => v !== null && v !== undefined),
+  );
+  return { resposta: saida.resposta, campos };
+}
+
+const MAX_MENSAGENS = 20; // manda só a cauda da conversa pro modelo
+
+// Conversa com memória. Nunca lança: sem IA, degrada para o extrator de
+// regras na última mensagem do produtor, com resposta por template.
+export async function conversarNucleo(mensagens, retratoLote = null) {
+  const historico = mensagens.slice(-MAX_MENSAGENS);
+  if (ia) {
+    try {
+      const { resposta, campos } = await conversarIA(historico, retratoLote);
+      return { resposta, campos, fonte: "ia" };
+    } catch (e) {
+      console.warn("[conversar] IA falhou, usando regras:", e.message || e);
+    }
+  }
+  const ultima = [...historico].reverse().find((m) => m.papel !== "graocerto");
+  const campos = ultima ? extrairParametros(ultima.texto) : {};
+  const tem = Object.keys(campos).length > 0;
+  return {
+    resposta: tem
+      ? "Entendi os números da sua mensagem — vou aplicar na simulação e o app recalcula na hora."
+      : 'Não achei números nessa mensagem. Me diga, por exemplo: "colhi 12 mil sacas de soja, devendo 1,2 ao mês".',
+    campos,
+    fonte: "regras",
+    aviso: ia
+      ? "IA indisponível agora — entendi por regras locais, sem memória da conversa."
+      : "Sem ANTHROPIC_API_KEY no servidor — entendi por regras locais, sem memória da conversa.",
+  };
 }

@@ -18,8 +18,14 @@ import {
   interpretarTextoNucleo,
   interpretarImagemNucleo,
   recomendarLoteNucleo,
+  conversarNucleo,
   temIA,
 } from "./nucleo.mjs";
+
+const mensagensValidas = (ms) =>
+  Array.isArray(ms) &&
+  ms.length > 0 &&
+  ms.every((m) => m && typeof m.texto === "string" && ["produtor", "graocerto"].includes(m.papel));
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -79,13 +85,20 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/interpretar") {
     try {
-      const { texto, lote } = await lerCorpo(req);
-      const temTexto = typeof texto === "string" && texto.trim();
-      if (!temTexto && !lote) {
-        return json(400, { erro: "envie { texto } e/ou { lote }" });
-      }
+      const { texto, lote, mensagens } = await lerCorpo(req);
       if (lote && !lote.resultado) {
         return json(400, { erro: "lote precisa vir com o resultado já calculado" });
+      }
+      // Modo chat (Fase 3)
+      if (mensagens !== undefined) {
+        if (!mensagensValidas(mensagens)) {
+          return json(400, { erro: "mensagens deve ser [{papel: 'produtor'|'graocerto', texto}]" });
+        }
+        return json(200, await conversarNucleo(mensagens, lote || null));
+      }
+      const temTexto = typeof texto === "string" && texto.trim();
+      if (!temTexto && !lote) {
+        return json(400, { erro: "envie { mensagens }, { texto } e/ou { lote }" });
       }
       if (!temTexto) return json(200, await recomendarLoteNucleo(lote));
       return json(200, await interpretarTextoNucleo(texto.trim(), lote || null));

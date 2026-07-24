@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
 import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
 import {
-  interpretarTexto,
+  conversar,
   interpretarImagem,
   gerarRecomendacao,
   vozSuportada,
@@ -58,19 +58,6 @@ const LINHAS_COMPARACAO = [
   ],
   ["Custo de segurar", (s) => `R$ ${fmtBRL(s.consolidado.custoTotalSegurar)}`],
 ];
-
-// Como exibir cada parâmetro extraído no card "foi isso que entendi".
-const ROTULOS_CAMPOS = {
-  cultura: ["Cultura", (v) => CULTURAS[v]?.nome || v],
-  sacas: ["Quantidade", (v) => `${fmtBRL(v)} sacas`],
-  precoHoje: ["Preço hoje", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
-  precoEsperado: ["Preço esperado", (v) => `R$ ${fmtBRL(v, 2)}/saca`],
-  meses: ["Horizonte", (v) => plMeses(v)],
-  jurosMes: ["Custo do dinheiro", (v) => `${fmtBRL(v, 2)}% a.m.`],
-  custoArmz: ["Armazenagem", (v) => `R$ ${fmtBRL(v, 2)}/saca/mês`],
-  perdaMes: ["Perda técnica", (v) => `${fmtBRL(v, 2)}% ao mês`],
-  dataDocumento: ["Data do documento", (v) => String(v)],
-};
 
 // Assinatura das entradas de um lote — muda quando o resultado muda, e é
 // assim que sabemos que a frase de recomendação ficou desatualizada.
@@ -335,75 +322,35 @@ export default function App() {
     return a;
   }, [statusCot, perfil, consolidado, resultados]);
 
-  // ── Entrada conversacional (texto, voz, foto) ─────────────────
-  // A frase/foto vira parâmetros extraídos; o produtor CONFIRMA o que
-  // foi entendido antes de qualquer coisa mudar na simulação.
-  const [fraseConversa, setFraseConversa] = useState("");
-  const [interpretando, setInterpretando] = useState(false);
-  const [entendimento, setEntendimento] = useState(null); // {campos, resumo, fonte, aviso}
-  const [erroConversa, setErroConversa] = useState(null);
+  // ── Chat com o GrãoCerto (Fase 3): texto, voz e foto ──────────
+  // Conversa com MEMÓRIA: o histórico inteiro vai ao backend; os campos
+  // que o produtor muda são aplicados ao lote em foco e o APP recalcula
+  // — a resposta com números novos volta pro chat calculada aqui.
+  const [chatAberto, setChatAberto] = useState(false);
+  const [mensagensChat, setMensagensChat] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatOcupado, setChatOcupado] = useState(false);
   const [gravando, setGravando] = useState(false);
   const [vozOk] = useState(() => vozSuportada());
-  const [alvo, setAlvo] = useState("novo"); // id do lote destino ou "novo"
+  const [alvo, setAlvo] = useState("novo"); // lote em foco no chat (ou "novo")
   const reconhecimentoRef = useRef(null);
   const fotoInputRef = useRef(null);
+  const fimChatRef = useRef(null);
 
-  const enviarFrase = async () => {
-    const texto = fraseConversa.trim();
-    if (!texto) return;
-    setErroConversa(null);
-    setEntendimento(null);
-    setInterpretando(true);
-    try {
-      const r = await interpretarTexto(texto);
-      if (!Object.keys(r.campos).length) {
-        setErroConversa(
-          'Não achei números nem cultura nessa frase — tente algo como "colhi 12 mil sacas de soja, devendo 1,2 ao mês no banco".',
-        );
-      } else {
-        setEntendimento(r);
-      }
-    } finally {
-      setInterpretando(false);
-    }
+  // Rola o chat para a última mensagem.
+  useEffect(() => {
+    fimChatRef.current?.scrollIntoView({ block: "end" });
+  }, [mensagensChat, chatAberto, chatOcupado]);
+
+  // Índice do lote em foco (fallback: o último).
+  const indiceAlvo = () => {
+    const i = lotes.findIndex((l) => l.id === alvo);
+    return i >= 0 ? i : lotes.length - 1;
   };
 
-  const enviarFoto = async (e) => {
-    const arquivo = e.target.files?.[0];
-    e.target.value = ""; // permite escolher o mesmo arquivo de novo
-    if (!arquivo) return;
-    setErroConversa(null);
-    setEntendimento(null);
-    setInterpretando(true);
-    try {
-      const r = await interpretarImagem(arquivo);
-      if (!Object.keys(r.campos).length) {
-        setErroConversa("Não consegui ler dados úteis nesse documento — tente uma foto mais nítida.");
-      } else {
-        setEntendimento(r);
-      }
-    } catch (err) {
-      setErroConversa(String(err.message || err));
-    } finally {
-      setInterpretando(false);
-    }
-  };
-
-  const alternarVoz = () => {
-    if (gravando) {
-      reconhecimentoRef.current?.stop();
-      return;
-    }
-    const rec = criarReconhecimentoVoz(setFraseConversa, () => setGravando(false));
-    if (!rec) return;
-    reconhecimentoRef.current = rec;
-    setGravando(true);
-    rec.start();
-  };
-
-  // Aplica os parâmetros confirmados — num lote existente ou num novo.
-  const aplicarEntendimento = () => {
-    const c = entendimento.campos;
+  // Aplica campos vindos do chat/foto ao lote em foco (ou cria um novo) e
+  // devolve o lote + resultado recalculado — TODO cálculo acontece aqui.
+  const aplicarCamposEmLote = (c) => {
     const custos = {};
     if (c.custoArmz != null) custos.armazenagem = c.custoArmz;
     if (c.jurosMes != null) custos.jurosMes = c.jurosMes;
@@ -424,30 +371,99 @@ export default function App() {
       });
       setLotes((ls) => [...ls, novo]);
       setAlvo(novo.id);
-    } else {
-      const atual = lotes.find((l) => l.id === alvo);
-      if (!atual) return;
-      const trocouCultura = c.cultura && CULTURAS[c.cultura] && c.cultura !== atual.cultura;
-      const cultura = trocouCultura ? c.cultura : atual.cultura;
-      const campos = { cultura };
-      if (c.sacas != null) campos.sacas = c.sacas;
-      if (c.meses != null) campos.meses = c.meses;
-      if (Object.keys(custos).length) campos.custos = custos;
-
-      if (c.precoHoje != null) {
-        campos.precoHoje = c.precoHoje;
-        campos.precoEditado = true; // veio do produtor: cotação não sobrescreve
-      } else if (trocouCultura) {
-        campos.precoHoje = cotacoes?.[cultura]?.preco ?? CULTURAS[cultura].precoHoje;
-        campos.precoEditado = false;
-      }
-      if (c.precoEsperado != null) campos.precoEsperado = c.precoEsperado;
-      else if (trocouCultura) campos.precoEsperado = CULTURAS[cultura].precoEsperado;
-
-      mudarLote(alvo, campos);
+      return { lote: novo, resultado: calcularLote(novo), indice: lotes.length };
     }
-    setEntendimento(null);
-    setFraseConversa("");
+
+    const i = indiceAlvo();
+    const atual = lotes[i];
+    const trocouCultura = c.cultura && CULTURAS[c.cultura] && c.cultura !== atual.cultura;
+    const cultura = trocouCultura ? c.cultura : atual.cultura;
+    const novo = {
+      ...atual,
+      cultura,
+      sacas: c.sacas ?? atual.sacas,
+      meses: c.meses ?? atual.meses,
+      custos: { ...atual.custos, ...custos },
+    };
+    if (c.precoHoje != null) {
+      novo.precoHoje = c.precoHoje;
+      novo.precoEditado = true; // veio do produtor: cotação não sobrescreve
+    } else if (trocouCultura) {
+      novo.precoHoje = cotacoes?.[cultura]?.preco ?? CULTURAS[cultura].precoHoje;
+      novo.precoEditado = false;
+    }
+    if (c.precoEsperado != null) novo.precoEsperado = c.precoEsperado;
+    else if (trocouCultura) novo.precoEsperado = CULTURAS[cultura].precoEsperado;
+
+    setLotes((ls) => ls.map((l) => (l.id === atual.id ? novo : l)));
+    return { lote: novo, resultado: calcularLote(novo), indice: i };
+  };
+
+  // Mensagem-resumo do resultado novo — números do app, nunca do modelo.
+  const msgResultado = ({ lote, resultado, indice }) =>
+    `📊 Lote ${indice + 1} (${CULTURAS[lote.cultura]?.nome || lote.cultura}) atualizado: ` +
+    `${resultado.veredito === "armazenar" ? "ARMAZENAR" : "VENDER AGORA"} · ` +
+    `${resultado.vantagemPorSaca >= 0 ? "+" : "−"} R$ ${fmtBRL(Math.abs(resultado.vantagemPorSaca), 2)}/saca · ` +
+    `empate R$ ${fmtBRL(resultado.precoEmpate, 2)}.`;
+
+  const enviarMensagemChat = async () => {
+    const texto = chatInput.trim();
+    if (!texto || chatOcupado) return;
+    if (gravando) reconhecimentoRef.current?.stop();
+    const historico = [...mensagensChat, { papel: "produtor", texto }];
+    setMensagensChat(historico);
+    setChatInput("");
+    setChatOcupado(true);
+    try {
+      const i = indiceAlvo();
+      const r = await conversar(historico, retratoParaIA(lotes[i], resultados[i]));
+      const novas = [...historico, { papel: "graocerto", texto: r.resposta, aviso: r.aviso }];
+      if (r.campos && Object.keys(r.campos).length) {
+        novas.push({ papel: "graocerto", texto: msgResultado(aplicarCamposEmLote(r.campos)) });
+      }
+      setMensagensChat(novas);
+    } finally {
+      setChatOcupado(false);
+    }
+  };
+
+  // Foto de romaneio/NF vira mensagem no chat; campos lidos são aplicados.
+  const enviarFotoChat = async (e) => {
+    const arquivo = e.target.files?.[0];
+    e.target.value = ""; // permite escolher o mesmo arquivo de novo
+    if (!arquivo || chatOcupado) return;
+    const historico = [...mensagensChat, { papel: "produtor", texto: "📷 Foto de romaneio/nota fiscal" }];
+    setMensagensChat(historico);
+    setChatOcupado(true);
+    try {
+      const r = await interpretarImagem(arquivo);
+      const novas = [...historico, { papel: "graocerto", texto: r.resumo || "Li o documento." }];
+      const { dataDocumento: _d, ...campos } = r.campos || {};
+      if (Object.keys(campos).length) {
+        novas.push({ papel: "graocerto", texto: msgResultado(aplicarCamposEmLote(campos)) });
+      }
+      setMensagensChat(novas);
+    } catch (err) {
+      setMensagensChat([
+        ...historico,
+        { papel: "graocerto", texto: String(err.message || err), aviso: "erro" },
+      ]);
+    } finally {
+      setChatOcupado(false);
+    }
+  };
+
+  // Voz: o áudio transcrito preenche o campo; o produtor confere e envia.
+  const alternarVoz = () => {
+    if (gravando) {
+      reconhecimentoRef.current?.stop();
+      return;
+    }
+    const rec = criarReconhecimentoVoz(setChatInput, () => setGravando(false));
+    if (!rec) return;
+    reconhecimentoRef.current = rec;
+    setGravando(true);
+    rec.start();
   };
 
   const nomeLote = (l, i) => `Lote ${i + 1} · ${CULTURAS[l.cultura]?.nome || l.cultura}`;
@@ -592,121 +608,6 @@ export default function App() {
           {/* ══ ABA OPERAÇÃO — lotes e simulação ═════════════════ */}
           {abaAtiva === "operacao" && (
           <>
-          <section style={st.conversaPainel}>
-            <h2 style={st.tituloSecao}>Fale com o GrãoCerto</h2>
-            <p style={st.formIntro}>
-              Conte como está sua safra — por texto, voz ou foto de romaneio de balança / nota
-              fiscal — que eu preencho a simulação. Ex.: “colhi 12 mil sacas de soja, tô devendo
-              no banco a 1,2 ao mês”.
-            </p>
-            <textarea
-              value={fraseConversa}
-              onChange={(e) => setFraseConversa(e.target.value)}
-              rows={2}
-              style={st.conversaInput}
-              placeholder={gravando ? "Ouvindo… pode falar" : "Escreva aqui ou use o microfone…"}
-              disabled={interpretando}
-            />
-            <div style={st.conversaAcoes}>
-              <button
-                type="button"
-                style={st.btnPrimario}
-                onClick={enviarFrase}
-                disabled={interpretando || !fraseConversa.trim()}
-              >
-                {interpretando ? "Interpretando…" : "Interpretar"}
-              </button>
-              {vozOk && (
-                <button
-                  type="button"
-                  style={{ ...st.btnSecundario, ...(gravando ? st.btnGravando : {}) }}
-                  onClick={alternarVoz}
-                  disabled={interpretando}
-                >
-                  {gravando ? "■ Parar" : "🎤 Falar"}
-                </button>
-              )}
-              <button
-                type="button"
-                style={st.btnSecundario}
-                onClick={() => fotoInputRef.current?.click()}
-                disabled={interpretando}
-              >
-                📷 Foto de romaneio/NF
-              </button>
-              <input
-                ref={fotoInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                style={{ display: "none" }}
-                onChange={enviarFoto}
-              />
-            </div>
-
-            <label style={st.alvoLinha}>
-              <span style={st.alvoRotulo}>Aplicar em</span>
-              <select value={alvo} onChange={(e) => setAlvo(e.target.value)} style={st.alvoSelect}>
-                <option value="novo">＋ Novo lote</option>
-                {lotes.map((l, i) => (
-                  <option key={l.id} value={l.id}>
-                    {nomeLote(l, i)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {erroConversa && <div style={st.conversaErro}>{erroConversa}</div>}
-
-            {entendimento && (
-              <div style={st.entendimento}>
-                <div style={st.entendimentoTitulo}>
-                  Foi isso que eu entendi
-                  {entendimento.fonte === "documento"
-                    ? " do documento"
-                    : entendimento.fonte === "regras"
-                      ? " (por regras, sem IA)"
-                      : ""}
-                  :
-                </div>
-                {entendimento.resumo && (
-                  <p style={st.entendimentoResumo}>“{entendimento.resumo}”</p>
-                )}
-                <ul style={st.entendimentoLista}>
-                  {Object.entries(entendimento.campos).map(([k, v]) =>
-                    ROTULOS_CAMPOS[k] ? (
-                      <li key={k} style={st.entendimentoItem}>
-                        <span>{ROTULOS_CAMPOS[k][0]}</span>
-                        <strong style={st.entendimentoValor}>{ROTULOS_CAMPOS[k][1](v)}</strong>
-                      </li>
-                    ) : null,
-                  )}
-                </ul>
-                <p style={st.entendimentoNota}>
-                  Vai ser aplicado em{" "}
-                  <strong>
-                    {alvo === "novo"
-                      ? "um lote novo"
-                      : nomeLote(
-                          lotes.find((l) => l.id === alvo) || lotes[0],
-                          lotes.findIndex((l) => l.id === alvo),
-                        )}
-                  </strong>
-                  . O que não foi dito continua como está.
-                </p>
-                {entendimento.aviso && <p style={st.entendimentoAviso}>{entendimento.aviso}</p>}
-                <div style={st.formAcoes}>
-                  <button type="button" style={st.btnPrimario} onClick={aplicarEntendimento}>
-                    Confirmar e simular
-                  </button>
-                  <button type="button" style={st.btnSecundario} onClick={() => setEntendimento(null)}>
-                    Descartar
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
-
           {/* Visão da safra inteira — só faz sentido com mais de um lote */}
           {lotes.length > 1 && (
             <section style={st.consolidadoPainel}>
@@ -932,6 +833,112 @@ export default function App() {
             tempo real. As orientações explicam a conta de custo do próprio app; não são
             recomendação de investimento. Indicadores: CEPEA/ESALQ (CC BY-NC 4.0).
           </p>
+
+          {/* ══ CHAT flutuante — disponível em todas as abas ═════ */}
+          {!chatAberto && (
+            <button
+              type="button"
+              style={st.chatFab}
+              onClick={() => setChatAberto(true)}
+              aria-label="Abrir conversa com o GrãoCerto"
+            >
+              💬
+            </button>
+          )}
+          {chatAberto && (
+            <section style={st.chatPainel} aria-label="Conversa com o GrãoCerto">
+              <div style={st.chatCabecalho}>
+                <span style={st.chatTitulo}>💬 Fale com o GrãoCerto</span>
+                <button
+                  type="button"
+                  style={st.chatFechar}
+                  onClick={() => setChatAberto(false)}
+                  aria-label="Fechar conversa"
+                >
+                  ×
+                </button>
+              </div>
+              <label style={st.chatAlvo}>
+                <span style={st.alvoRotulo}>Falando sobre</span>
+                <select value={alvo} onChange={(e) => setAlvo(e.target.value)} style={st.alvoSelect}>
+                  {lotes.map((l, i) => (
+                    <option key={l.id} value={l.id}>
+                      {nomeLote(l, i)}
+                    </option>
+                  ))}
+                  <option value="novo">＋ Novo lote</option>
+                </select>
+              </label>
+              <div style={st.chatMensagens}>
+                {mensagensChat.length === 0 && (
+                  <p style={st.chatVazio}>
+                    Me conte da sua safra — “colhi 12 mil sacas de soja, tô devendo 1,2 ao mês”
+                    — ou pergunte “e se eu vender só metade?”. Também leio foto de romaneio e
+                    nota fiscal. 📷
+                  </p>
+                )}
+                {mensagensChat.map((m, i) => (
+                  <div key={i} style={m.papel === "produtor" ? st.bolhaProdutor : st.bolhaGraocerto}>
+                    {m.texto}
+                    {m.aviso && m.aviso !== "erro" && <span style={st.bolhaAviso}>{m.aviso}</span>}
+                  </div>
+                ))}
+                {chatOcupado && <div style={st.bolhaGraocerto}>…</div>}
+                <div ref={fimChatRef} />
+              </div>
+              <div style={st.chatEntradaLinha}>
+                <textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      enviarMensagemChat();
+                    }
+                  }}
+                  rows={1}
+                  style={st.chatEntrada}
+                  placeholder={gravando ? "Ouvindo… pode falar" : "Escreva ou fale…"}
+                  disabled={chatOcupado}
+                />
+                {vozOk && (
+                  <button
+                    type="button"
+                    style={{ ...st.chatBtnIcone, ...(gravando ? st.btnGravando : {}) }}
+                    onClick={alternarVoz}
+                    aria-label={gravando ? "Parar gravação" : "Falar"}
+                  >
+                    {gravando ? "■" : "🎤"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  style={st.chatBtnIcone}
+                  onClick={() => fotoInputRef.current?.click()}
+                  disabled={chatOcupado}
+                  aria-label="Enviar foto de romaneio ou nota fiscal"
+                >
+                  📷
+                </button>
+                <input
+                  ref={fotoInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: "none" }}
+                  onChange={enviarFotoChat}
+                />
+                <button
+                  type="button"
+                  style={st.chatEnviar}
+                  onClick={enviarMensagemChat}
+                  disabled={chatOcupado || !chatInput.trim()}
+                >
+                  ➤
+                </button>
+              </div>
+            </section>
+          )}
 
           <TabBar ativa={abaAtiva} onTrocar={setAbaAtiva} />
         </>
@@ -1604,34 +1611,6 @@ const st = {
     whiteSpace: "nowrap",
   },
   gradeUnica: { maxWidth: 980, margin: "24px auto 0" },
-  conversaPainel: {
-    maxWidth: 980,
-    margin: "20px auto 0",
-    background: "#FFFFFF",
-    border: "1px solid #D8DED2",
-    borderRadius: 10,
-    padding: "20px 20px 16px",
-  },
-  conversaInput: {
-    width: "100%",
-    padding: "10px 12px",
-    fontSize: 16,
-    fontFamily: "'Archivo', sans-serif",
-    border: "1px solid #C6CFBF",
-    borderRadius: 8,
-    background: "#FDFDFB",
-    color: "#1E2A22",
-    resize: "vertical",
-    boxSizing: "border-box",
-  },
-  conversaAcoes: { display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" },
-  alvoLinha: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 12,
-    flexWrap: "wrap",
-  },
   alvoRotulo: {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: 11,
@@ -1653,47 +1632,133 @@ const st = {
     color: "#FFFFFF",
     border: "1px solid #A4432E",
   },
-  conversaErro: {
-    marginTop: 12,
-    padding: "8px 12px",
-    background: "#FBF3DC",
-    border: "1px solid #E4D296",
-    borderRadius: 8,
-    fontSize: 13,
-    color: "#6E5A17",
+  // Chat flutuante
+  chatFab: {
+    position: "fixed",
+    right: 16,
+    bottom: 84,
+    width: 56,
+    height: 56,
+    borderRadius: "50%",
+    border: "2px solid #1E2A22",
+    background: "#C99B2F",
+    fontSize: 24,
+    cursor: "pointer",
+    zIndex: 11,
+    boxShadow: "0 2px 8px rgba(30,42,34,.25)",
   },
-  entendimento: {
-    marginTop: 14,
-    padding: "12px 14px",
-    background: "#F4F0E3",
-    borderLeft: "4px solid #C99B2F",
-    borderRadius: "0 8px 8px 0",
-  },
-  entendimentoTitulo: {
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: "0.1em",
-    color: "#8A7A45",
-    fontWeight: 700,
-  },
-  entendimentoResumo: {
-    margin: "8px 0 0",
-    fontSize: 14,
-    fontStyle: "italic",
-    color: "#3B473D",
-  },
-  entendimentoLista: { listStyle: "none", margin: "10px 0", padding: 0, maxWidth: 420 },
-  entendimentoItem: {
+  chatPainel: {
+    position: "fixed",
+    right: 12,
+    left: 12,
+    bottom: 78,
+    maxWidth: 420,
+    margin: "0 0 0 auto",
+    background: "#FFFFFF",
+    border: "2px solid #1E2A22",
+    borderRadius: 12,
+    zIndex: 11,
     display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: "5px 0",
-    fontSize: 14,
-    borderBottom: "1px dashed #E4D296",
+    flexDirection: "column",
+    boxShadow: "0 6px 24px rgba(30,42,34,.25)",
+    overflow: "hidden",
   },
-  entendimentoValor: { fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" },
-  entendimentoNota: { margin: "8px 0 0", fontSize: 12, color: "#7A6E45" },
-  entendimentoAviso: { margin: "6px 0 0", fontSize: 12, color: "#A4432E" },
+  chatCabecalho: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "10px 14px",
+    background: "#1E2A22",
+    color: "#F2F4EF",
+  },
+  chatTitulo: { fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 14 },
+  chatFechar: {
+    border: "none",
+    background: "transparent",
+    color: "#F2F4EF",
+    fontSize: 22,
+    cursor: "pointer",
+    lineHeight: 1,
+  },
+  chatAlvo: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    borderBottom: "1px solid #D8DED2",
+    background: "#F7F8F4",
+  },
+  chatMensagens: {
+    padding: "12px 12px 4px",
+    overflowY: "auto",
+    maxHeight: "45vh",
+    minHeight: 120,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  chatVazio: { fontSize: 13, color: "#7A897C", lineHeight: 1.5, margin: 0 },
+  bolhaProdutor: {
+    alignSelf: "flex-end",
+    maxWidth: "85%",
+    background: "#1E2A22",
+    color: "#F2F4EF",
+    padding: "8px 12px",
+    borderRadius: "12px 12px 2px 12px",
+    fontSize: 14,
+    lineHeight: 1.45,
+    whiteSpace: "pre-wrap",
+  },
+  bolhaGraocerto: {
+    alignSelf: "flex-start",
+    maxWidth: "85%",
+    background: "#F4F0E3",
+    color: "#1E2A22",
+    border: "1px solid #E4D296",
+    padding: "8px 12px",
+    borderRadius: "12px 12px 12px 2px",
+    fontSize: 14,
+    lineHeight: 1.45,
+    whiteSpace: "pre-wrap",
+  },
+  bolhaAviso: { display: "block", marginTop: 6, fontSize: 11, color: "#A4432E" },
+  chatEntradaLinha: {
+    display: "flex",
+    gap: 6,
+    padding: "10px 12px",
+    borderTop: "1px solid #D8DED2",
+    alignItems: "flex-end",
+  },
+  chatEntrada: {
+    flex: 1,
+    minWidth: 0,
+    padding: "8px 10px",
+    fontSize: 15,
+    fontFamily: "'Archivo', sans-serif",
+    border: "1px solid #C6CFBF",
+    borderRadius: 8,
+    background: "#FDFDFB",
+    color: "#1E2A22",
+    resize: "none",
+  },
+  chatBtnIcone: {
+    border: "1px solid #C6CFBF",
+    background: "#F7F8F4",
+    fontSize: 16,
+    padding: "7px 10px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  chatEnviar: {
+    border: "none",
+    background: "#C99B2F",
+    color: "#1E2A22",
+    fontWeight: 700,
+    fontSize: 16,
+    padding: "7px 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
 
   // Lotes
   loteBloco: { maxWidth: 980, margin: "24px auto 0" },

@@ -177,6 +177,35 @@ export const SCHEMA_PARAMETROS = {
   additionalProperties: false,
 };
 
+// Schema do CHAT: resposta em texto + campos alterados (null = sem mudança).
+export const SCHEMA_CHAT = {
+  type: "object",
+  properties: {
+    resposta: {
+      type: "string",
+      description: "Sua resposta ao produtor no chat — curta, em pt-BR simples de produtor",
+    },
+    campos: {
+      type: "object",
+      description: "APENAS os parâmetros que o produtor mudou/informou na última mensagem; null nos demais",
+      properties: {
+        cultura: anulavel({ type: "string", enum: ["soja", "milho", "trigo"] }, "Cultura, se mudou"),
+        sacas: anulavel({ type: "number" }, "Sacas de 60 kg (permitidas conversões simples: metade, 30%, toneladas → kg ÷ 60)"),
+        precoHoje: anulavel({ type: "number" }, "Preço atual R$/saca, se informado"),
+        precoEsperado: anulavel({ type: "number" }, "Preço esperado R$/saca, se informado"),
+        meses: anulavel({ type: "integer" }, "Horizonte em meses, se mudou"),
+        jurosMes: anulavel({ type: "number" }, "% ao mês do dinheiro, se informado"),
+        custoArmz: anulavel({ type: "number" }, "R$/saca/mês de armazenagem, se informado"),
+        perdaMes: anulavel({ type: "number" }, "% ao mês de perda técnica, se informado"),
+      },
+      required: ["cultura", "sacas", "precoHoje", "precoEsperado", "meses", "jurosMes", "custoArmz", "perdaMes"],
+      additionalProperties: false,
+    },
+  },
+  required: ["resposta", "campos"],
+  additionalProperties: false,
+};
+
 // Schema enxuto para quando só queremos a frase (sem extrair parâmetros).
 export const SCHEMA_RECOMENDACAO = {
   type: "object",
