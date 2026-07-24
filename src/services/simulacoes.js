@@ -8,6 +8,8 @@
 // vira a camada de sincronização (mesma estratégia do perfil).
 // ─────────────────────────────────────────────────────────────
 
+import { supabase, usuarioAtual } from "./supabase";
+
 const CHAVE = "graocerto.simulacoes.v1";
 export const MAX_SIMULACOES = 5;
 
@@ -65,6 +67,69 @@ export function listarSimulacoes() {
   return lerTodas();
 }
 
+// ── Nuvem (Supabase) — fire-and-forget; o localStorage é o cache ──
+
+async function enviarSimulacaoNuvem(sim) {
+  if (!supabase) return;
+  try {
+    const usuario = await usuarioAtual();
+    if (!usuario) return;
+    const { error } = await supabase.from("simulacoes").upsert({
+      id: sim.id,
+      user_id: usuario.id,
+      dados: sim,
+      criada_em: sim.criadaEm,
+    });
+    if (error) console.warn("[simulacoes] falha ao sincronizar:", error.message);
+  } catch (e) {
+    console.warn("[simulacoes] falha ao sincronizar:", e.message || e);
+  }
+}
+
+async function excluirSimulacaoNuvem(id) {
+  if (!supabase) return;
+  try {
+    const usuario = await usuarioAtual();
+    if (!usuario) return;
+    const { error } = await supabase.from("simulacoes").delete().eq("id", id);
+    if (error) console.warn("[simulacoes] falha ao excluir da nuvem:", error.message);
+  } catch (e) {
+    console.warn("[simulacoes] falha ao excluir da nuvem:", e.message || e);
+  }
+}
+
+// Ao logar: busca as simulações do usuário na nuvem. Se houver, elas
+// vencem e atualizam o cache; se a nuvem estiver vazia e houver locais,
+// sobe as locais. Sem Supabase/login, devolve as locais.
+export async function sincronizarSimulacoes() {
+  const locais = lerTodas();
+  if (!supabase) return locais;
+  try {
+    const usuario = await usuarioAtual();
+    if (!usuario) return locais;
+    const { data, error } = await supabase
+      .from("simulacoes")
+      .select("dados")
+      .eq("user_id", usuario.id)
+      .order("criada_em", { ascending: false })
+      .limit(MAX_SIMULACOES);
+    if (error) {
+      console.warn("[simulacoes] falha ao buscar da nuvem:", error.message);
+      return locais;
+    }
+    const daNuvem = (data || []).map((r) => migrar(r.dados)).filter(Boolean);
+    if (daNuvem.length) {
+      persistir(daNuvem);
+      return daNuvem;
+    }
+    for (const s of locais) await enviarSimulacaoNuvem(s);
+    return locais;
+  } catch (e) {
+    console.warn("[simulacoes] falha ao sincronizar:", e.message || e);
+    return locais;
+  }
+}
+
 // Salva um retrato e devolve a lista atualizada. Mantém só as
 // MAX_SIMULACOES mais recentes (a mais antiga sai).
 export function salvarSimulacaoHistorico(retrato) {
@@ -75,11 +140,13 @@ export function salvarSimulacaoHistorico(retrato) {
   };
   const lista = [nova, ...lerTodas()].slice(0, MAX_SIMULACOES);
   persistir(lista);
+  void enviarSimulacaoNuvem(nova);
   return lista;
 }
 
 export function excluirSimulacao(id) {
   const lista = lerTodas().filter((s) => s.id !== id);
   persistir(lista);
+  void excluirSimulacaoNuvem(id);
   return lista;
 }

@@ -12,6 +12,8 @@
 // isso (objeto único versionado).
 // ─────────────────────────────────────────────────────────────
 
+import { supabase, usuarioAtual } from "./supabase";
+
 const CHAVE = "graocerto.perfil.v1";
 
 // Defaults regionais de custos — valores de REFERÊNCIA, sempre editáveis
@@ -46,6 +48,25 @@ export function carregarPerfil() {
   }
 }
 
+// Sobe o perfil pra nuvem quando há usuário logado. Fire-and-forget:
+// falha de rede não pode travar a interface — o localStorage é o cache
+// que garante o funcionamento offline.
+async function enviarPerfilNuvem(perfil) {
+  if (!supabase) return;
+  try {
+    const usuario = await usuarioAtual();
+    if (!usuario) return;
+    const { error } = await supabase.from("perfis").upsert({
+      user_id: usuario.id,
+      dados: perfil,
+      atualizado_em: new Date().toISOString(),
+    });
+    if (error) console.warn("[perfil] falha ao sincronizar:", error.message);
+  } catch (e) {
+    console.warn("[perfil] falha ao sincronizar:", e.message || e);
+  }
+}
+
 export function salvarPerfil(perfil) {
   const completo = { versao: 1, ...perfil, atualizadoEm: new Date().toISOString() };
   try {
@@ -53,6 +74,7 @@ export function salvarPerfil(perfil) {
   } catch {
     // storage indisponível: o app continua funcionando, só não persiste
   }
+  void enviarPerfilNuvem(completo);
   return completo;
 }
 
@@ -64,4 +86,36 @@ export function atualizarPerfil(parcial) {
     ...parcial,
     custos: { ...atual.custos, ...parcial.custos },
   });
+}
+
+// Ao logar: busca o perfil na nuvem. Se existir, ele vence e atualiza o
+// cache local; se não existir mas houver perfil local, sobe o local.
+// Sem Supabase/login, devolve o local — o chamador não precisa saber.
+export async function sincronizarPerfil() {
+  const local = carregarPerfil();
+  if (!supabase) return local;
+  try {
+    const usuario = await usuarioAtual();
+    if (!usuario) return local;
+    const { data, error } = await supabase
+      .from("perfis")
+      .select("dados")
+      .eq("user_id", usuario.id)
+      .maybeSingle();
+    if (error) {
+      console.warn("[perfil] falha ao buscar da nuvem:", error.message);
+      return local;
+    }
+    if (data?.dados) {
+      try {
+        localStorage.setItem(CHAVE, JSON.stringify(data.dados));
+      } catch {}
+      return data.dados;
+    }
+    if (local) await enviarPerfilNuvem(local);
+    return local;
+  } catch (e) {
+    console.warn("[perfil] falha ao sincronizar:", e.message || e);
+    return local;
+  }
 }

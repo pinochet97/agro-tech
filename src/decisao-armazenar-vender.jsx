@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { buscarCotacoes } from "./services/cotacoes";
-import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil } from "./services/perfil";
+import { REGIOES, defaultsDaRegiao, carregarPerfil, atualizarPerfil, sincronizarPerfil } from "./services/perfil";
+import { supabase, supabaseConfigurado } from "./services/supabase";
 import {
   conversar,
   interpretarImagem,
@@ -8,7 +9,13 @@ import {
   vozSuportada,
   criarReconhecimentoVoz,
 } from "./services/conversa";
-import { listarSimulacoes, salvarSimulacaoHistorico, excluirSimulacao, MAX_SIMULACOES } from "./services/simulacoes";
+import {
+  listarSimulacoes,
+  salvarSimulacaoHistorico,
+  excluirSimulacao,
+  sincronizarSimulacoes,
+  MAX_SIMULACOES,
+} from "./services/simulacoes";
 import { CULTURAS, criarLote, calcularLote, consolidar, retratoParaIA } from "./services/lotes";
 
 // ─────────────────────────────────────────────────────────────
@@ -95,6 +102,32 @@ export default function App() {
   // "home" | "operacao" | "inteligencia" | "conta"
   const [abaAtiva, setAbaAtiva] = useState("home");
   const [contaSalva, setContaSalva] = useState(false);
+
+  // ── Autenticação (Fase 4, opcional) ───────────────────────────
+  // Sem Supabase configurado, `usuario` fica null e tudo segue no
+  // localStorage. Logado, perfil e simulações sincronizam na nuvem.
+  const [usuario, setUsuario] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => setUsuario(data.session?.user ?? null));
+    const { data: assinatura } = supabase.auth.onAuthStateChange((_evento, sessao) => {
+      setUsuario(sessao?.user ?? null);
+    });
+    return () => assinatura.subscription.unsubscribe();
+  }, []);
+
+  // Ao logar, puxa perfil e simulações da nuvem (nuvem vence; se estiver
+  // vazia, os dados locais sobem — ver services/perfil e simulacoes).
+  useEffect(() => {
+    if (!usuario) return;
+    (async () => {
+      const p = await sincronizarPerfil();
+      if (p) setPerfil(p);
+      setSimulacoes(await sincronizarSimulacoes());
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuario?.id]);
 
   // ── Lotes: o estado central da safra ──────────────────────────
   const [lotes, setLotes] = useState(() => [
@@ -815,9 +848,33 @@ export default function App() {
           </>
           )}
 
-          {/* ══ ABA CONTA — perfil e custos ══════════════════════ */}
+          {/* ══ ABA CONTA — login, perfil e custos ═══════════════ */}
           {abaAtiva === "conta" && (
             <main style={st.gradeUnica}>
+              {!supabaseConfigurado() ? (
+                <p style={st.contaNota}>
+                  Sincronização em nuvem ainda não ativada — seus dados ficam só neste
+                  aparelho. (Para ativar: configurar VITE_SUPABASE_URL e
+                  VITE_SUPABASE_ANON_KEY.)
+                </p>
+              ) : usuario ? (
+                <div style={st.contaSessao}>
+                  <span style={st.contaEmail}>
+                    ✓ Conectado como <strong>{usuario.email}</strong> — perfil e simulações
+                    sincronizados na nuvem.
+                  </span>
+                  <button
+                    type="button"
+                    style={st.btnSecundario}
+                    onClick={() => supabase.auth.signOut()}
+                  >
+                    Sair
+                  </button>
+                </div>
+              ) : (
+                <LoginBox />
+              )}
+
               <FormPerfil inicial={perfil} onSalvar={salvarConta} onCancelar={null} />
               {contaSalva && (
                 <p style={st.contaFeedback}>
@@ -944,6 +1001,75 @@ export default function App() {
         </>
       )}
     </div>
+  );
+}
+
+// Login por magic link (Supabase Auth): o produtor digita o e-mail e
+// recebe um link — sem senha, que é atrito puro no campo.
+function LoginBox() {
+  const [email, setEmail] = useState("");
+  const [estado, setEstado] = useState(null); // null | "enviando" | "enviado" | "erro"
+  const [erro, setErro] = useState(null);
+
+  const enviarLink = async () => {
+    const e = email.trim();
+    if (!e || estado === "enviando") return;
+    setEstado("enviando");
+    setErro(null);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: e,
+        options: { emailRedirectTo: window.location.origin },
+      });
+      if (error) throw error;
+      setEstado("enviado");
+    } catch (err) {
+      setEstado("erro");
+      setErro(err.message || String(err));
+    }
+  };
+
+  return (
+    <section style={{ ...st.painel, maxWidth: 480, margin: "0 auto 20px" }}>
+      <h2 style={st.tituloSecao}>Entrar</h2>
+      {estado === "enviado" ? (
+        <p style={st.formIntro}>
+          ✓ Link enviado para <strong>{email}</strong> — abra seu e-mail e toque no link
+          para entrar. Depois disso, seu perfil e suas simulações ficam guardados na sua
+          conta e aparecem em qualquer aparelho.
+        </p>
+      ) : (
+        <>
+          <p style={st.formIntro}>
+            Sem senha: você recebe um link de acesso no e-mail. Com a conta, perfil e
+            simulações ficam guardados na nuvem e aparecem em qualquer aparelho.
+          </p>
+          <label style={st.campo}>
+            <span style={st.campoRotulo}>Seu e-mail</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && enviarLink()}
+              placeholder="produtor@exemplo.com.br"
+              style={st.select}
+              autoComplete="email"
+            />
+          </label>
+          <div style={st.formAcoes}>
+            <button
+              type="button"
+              style={st.btnPrimario}
+              onClick={enviarLink}
+              disabled={estado === "enviando" || !email.trim()}
+            >
+              {estado === "enviando" ? "Enviando…" : "Enviar link de acesso"}
+            </button>
+          </div>
+          {estado === "erro" && <p style={st.entradaErro}>Não consegui enviar: {erro}</p>}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -1483,6 +1609,32 @@ const st = {
     color: "#3E6B4F",
     marginTop: 12,
   },
+  contaNota: {
+    maxWidth: 480,
+    margin: "0 auto 16px",
+    padding: "10px 14px",
+    background: "#FBF3DC",
+    border: "1px solid #E4D296",
+    borderRadius: 8,
+    fontSize: 13,
+    color: "#6E5A17",
+    lineHeight: 1.5,
+  },
+  contaSessao: {
+    maxWidth: 480,
+    margin: "0 auto 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "12px 16px",
+    background: "#FFFFFF",
+    border: "1px solid #D8DED2",
+    borderRadius: 10,
+    flexWrap: "wrap",
+  },
+  contaEmail: { fontSize: 13, color: "#3B473D", lineHeight: 1.5, minWidth: 200, flex: 1 },
+  entradaErro: { fontSize: 13, color: "#A4432E", margin: "4px 0 8px" },
   topo: {
     maxWidth: 980,
     margin: "0 auto",

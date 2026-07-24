@@ -105,6 +105,17 @@ Visão de longo prazo (não implementar ainda, só para contexto):
   ainda — quando existirem, este módulo vira a camada de sincronização.
 - Este projeto nasceu de um protótipo em artifact do Claude.ai.
 
+- **Contas + banco (Supabase)** — Fase 4, código pronto AGUARDANDO o projeto Supabase:
+  arquitetura **local-first com sincronização**. Sem `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`,
+  o cliente (`src/services/supabase.js`) fica null e tudo segue no localStorage (zero
+  regressão — validado). Com as vars: login por **magic link** na aba Conta (sem senha,
+  que é atrito pro produtor; app continua usável SEM login — decisão deliberada p/ as
+  entrevistas), e perfil/simulações sincronizam nas tabelas `perfis`/`simulacoes`
+  (JSONB + RLS por usuário — `supabase/migrations/00_init.sql`, ainda NÃO executada).
+  Regras de sync: escrita local é síncrona + upsert fire-and-forget na nuvem; ao logar,
+  a nuvem vence; nuvem vazia ← dados locais sobem. **Para ativar:** criar projeto no
+  supabase.com → rodar a migração no SQL Editor → configurar as 2 vars no .env local e
+  na Vercel → redeploy. O caminho de nuvem NÃO foi testado ainda (sem projeto).
 - **Dashboard de 4 abas** — Fase 2 "Dashboard Real": tab bar fixa no rodapé
   (mobile-first), estado `abaAtiva` no App. **Home** = sacas totais, valor hoje,
   cotação do dia, "Recomendação do dia" (veredito consolidado) e alertas derivados do
